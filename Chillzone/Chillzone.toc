@@ -1,0 +1,30 @@
+## Interface: 11509, 11510, 16001, 16002, 16003, 16004, 16005, 16010, 16100, 20506, 20507
+## Title: |cff7fd4c1Chillzone|r
+## Notes: Связь гильдий «Чиллзон»: перепись, королевство, карта и общий чат.
+## Author: Chillzone addon contributors
+## Version: 0.1.0
+## SavedVariables: ChillzoneDB
+## X-License: MIT
+
+Bootstrap.lua
+libs\LibStub\LibStub.lua
+libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+libs\HereBeDragons\HereBeDragons-2.0.lua
+libs\HereBeDragons\HereBeDragons-Pins-2.0.lua
+
+Config.lua
+Locale.lua
+Util.lua
+Core.lua
+Codec.lua
+Comm.lua
+Zones.lua
+Roster.lua
+Data.lua
+Census.lua
+Relay.lua
+Channel.lua
+Chat.lua
+Views.lua
+UI.lua
+Map.lua

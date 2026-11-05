@@ -1,0 +1,245 @@
+-- Chillzone: аддон-сообщения. Очередь отправки (раз в 1.2 с, у реле — 4 куска за раз),
+-- повтор при «не сейчас» от игры, блокировка чата в подземельях, сборка кусков и
+-- разбор входящих по типам. Правила очереди — из Olympus Comm.lua.
+local ADDON, ns = ...
+
+local U = ns.Util
+local Codec = ns.Codec
+
+local Comm = {}
+ns.Comm = Comm
+
+Comm.SEND_INTERVAL = 1.2
+Comm.PARTS_RELAY = 4
+Comm.MAX_QUEUE = 200
+Comm.HOLD_MAX = 600 -- не начатое и ждавшее столько (блокировка) — выбрасывается
+
+-- Ответы игры «не сейчас»: AddonMessageThrottle (3), ChannelThrottle (8), GeneralError (9),
+-- AddOnMessageLockdown (11). Сообщение остаётся на месте, очередь ждёт всё дольше.
+local LOCKDOWN = 11
+local RETRYABLE = { [3] = true, [8] = true, [9] = true, [LOCKDOWN] = true }
+local RETRY_WAIT = { 2, 4, 8, 15, 30 }
+local RETRY_MAX = 5
+
+local queue = {}
+local handlers = {}
+local assemblers = {}
+local nextId = math.random(0, 1000)
+local refusedInRow, waitUntil = 0, 0
+Comm.stats = { sent = 0, recv = 0, fails = 0, retried = 0, dropped = 0, queued = 0 }
+Comm.lastWhisper = {} -- [Key] = когда шептали (для системного «нет такого игрока»)
+
+-- Типы, текст которых никогда не содержит "|": чистятся целиком до разбора.
+local PLAIN = { H1 = true, Q1 = true, RP = true, RY = true, RR = true, R1 = true }
+
+function Comm.On(kind, fn)
+	handlers[kind] = fn
+end
+
+local function NewId()
+	nextId = (nextId + 1) % 46656
+	return Codec.Base36(nextId)
+end
+
+function Comm.InLockdown()
+	return C_ChatInfo and C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() and true or false
+end
+
+local function IsSuccess(res)
+	return res == nil or res == true or res == 0
+end
+
+-- Одно сообщение прямо сейчас: true или false, код.
+function Comm.SendNow(dist, msg, target, logged)
+	if Comm.InLockdown() then return false, LOCKDOWN end
+	local to = nil
+	if dist == "WHISPER" then
+		to = U.TellName(target)
+		Comm.lastWhisper[U.Key(target)] = ns.Now()
+	end
+	local send = (logged and C_ChatInfo.SendAddonMessageLogged) or C_ChatInfo.SendAddonMessage
+	local ok, res = pcall(send, ns.PREFIX, msg, dist, to)
+	if ok and IsSuccess(res) then
+		Comm.stats.sent = Comm.stats.sent + 1
+		refusedInRow = 0
+		return true
+	end
+	if ok and RETRYABLE[res] then
+		refusedInRow = refusedInRow + 1
+		waitUntil = ns.Now() + RETRY_WAIT[math.min(refusedInRow, #RETRY_WAIT)]
+	end
+	Comm.stats.fails = Comm.stats.fails + 1
+	ns.Log("не отправлено %s: %s", dist, tostring(res))
+	if ok then return false, res end
+	return false, "error"
+end
+
+local function Finish(job, ok, why)
+	for i, j in ipairs(queue) do
+		if j == job then
+			table.remove(queue, i)
+			break
+		end
+	end
+	if not ok then Comm.stats.dropped = Comm.stats.dropped + 1 end
+	if job.done then ns.SafeCall("send done", job.done, ok, why) end
+end
+
+-- В очередь. opts: target (шёпот), key (новое заменяет ещё не начатое с тем же ключом),
+-- prio (вперёд обычных), logged (текст игрока), done(ok, why).
+function Comm.Send(dist, payload, opts)
+	opts = opts or {}
+	if type(payload) ~= "string" or payload == "" then return false end
+	if dist == "WHISPER" and not opts.target then return false end
+	local now = ns.Now()
+	if opts.key then
+		for _, job in ipairs(queue) do
+			if job.key == opts.key and job.i == 1 then
+				job.parts, job.at, job.target, job.done = Codec.Pack(payload, NewId()), now, opts.target, opts.done
+				return true
+			end
+		end
+	end
+	local job = {
+		dist = dist, target = opts.target, parts = Codec.Pack(payload, NewId()), i = 1,
+		key = opts.key, prio = opts.prio, logged = opts.logged, at = now, tries = 0, done = opts.done,
+	}
+	if job.prio then
+		local pos = 1
+		while queue[pos] and queue[pos].prio do pos = pos + 1 end
+		table.insert(queue, pos, job)
+	else
+		queue[#queue + 1] = job
+	end
+	Comm.stats.queued = Comm.stats.queued + 1
+	-- Переполнение: выбрасывается самое старое обычное, ещё не начатое.
+	while #queue > Comm.MAX_QUEUE do
+		local victim
+		for _, j in ipairs(queue) do
+			if not j.prio and j.i == 1 and j ~= job then
+				victim = j
+				break
+			end
+		end
+		if not victim then break end
+		Finish(victim, false, "dropped")
+	end
+	return true
+end
+
+function Comm.QueueSize()
+	return #queue
+end
+
+local function PumpOnce(prioOnly)
+	local job = queue[1]
+	if not job or (prioOnly and not job.prio) then return false end
+	local now = ns.Now()
+	if job.dist == "GUILD" and not ns.MyGuild() then
+		Finish(job, false, "no guild")
+		return true
+	end
+	local sent, why = Comm.SendNow(job.dist, job.parts[job.i], job.target, job.logged)
+	if not sent then
+		if RETRYABLE[why] then
+			if why ~= LOCKDOWN then job.tries = job.tries + 1 end
+			if job.tries < RETRY_MAX then
+				Comm.stats.retried = Comm.stats.retried + 1
+				return false
+			end
+		end
+		Finish(job, false, why or "failed")
+		return false
+	end
+	job.i = job.i + 1
+	if job.i > #job.parts then Finish(job, true) end
+	return true
+end
+
+local heldSince
+function Comm.Pump()
+	if not queue[1] then return end
+	local now = ns.Now()
+	if Comm.InLockdown() or now < waitUntil then
+		heldSince = heldSince or now
+		return
+	end
+	if heldSince then
+		heldSince = nil
+		for i = #queue, 1, -1 do
+			local j = queue[i]
+			if j.i == 1 and now - j.at >= Comm.HOLD_MAX then Finish(j, false, "stale") end
+		end
+	end
+	local R = ns.Relay
+	local parts = (R and R.IAmRelay and R.IAmRelay()) and Comm.PARTS_RELAY or 1
+	for _ = 1, parts do
+		if not PumpOnce(false) then return end
+	end
+end
+
+-- Срочное (чат) прямо сейчас, не дожидаясь насоса: до n кусков.
+function Comm.Flush(n)
+	if Comm.InLockdown() or ns.Now() < waitUntil then return end
+	for _ = 1, n or 1 do
+		if not PumpOnce(true) then return end
+	end
+end
+
+---------------------------------------------------------------------------
+-- Приём
+---------------------------------------------------------------------------
+
+-- Разбор целого сообщения. ctx — откуда оно пришло, если не напрямую: { via = "RM"|"RG"|"RL"|"self",
+-- relay = имя реле }. sender — автор (для RM/RG — origin из конверта).
+function Comm.Dispatch(msg, sender, dist, ctx)
+	local kind = msg:sub(1, 2)
+	local h = handlers[kind]
+	if not h then return end
+	if PLAIN[kind] then msg = Codec.Plain(msg) end
+	Comm.stats.recv = Comm.stats.recv + 1
+	ns.SafeCall("recv " .. kind, h, msg, sender, dist, ctx)
+end
+
+-- Вложенное сообщение из конверта реле: только R1 и M1.
+function Comm.Inject(inner, origin, ctx)
+	if not Codec.InnerType(inner) then return end
+	Comm.Dispatch(inner, origin, "RELAY", ctx)
+end
+
+local function OnAddon(prefix, msg, dist, sender)
+	if prefix ~= ns.PREFIX or not ns.me or type(msg) ~= "string" or type(sender) ~= "string" then return end
+	if dist ~= "GUILD" and dist ~= "WHISPER" then return end
+	sender = U.Normal(sender)
+	if ns.IsMe(sender) then return end
+	if msg:byte(1) == 67 then -- "C": кусок
+		local a = assemblers[dist]
+		if not a then
+			a = Codec.NewAssembler()
+			assemblers[dist] = a
+		end
+		msg = Codec.Feed(a, U.Key(sender), msg, ns.Now())
+		if not msg then return end
+	end
+	Comm.Dispatch(msg, sender, dist, nil)
+end
+
+ns.RegisterEvent("CHAT_MSG_ADDON", OnAddon)
+ns.RegisterEvent("CHAT_MSG_ADDON_LOGGED", OnAddon)
+
+if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
+	C_ChatInfo.RegisterAddonMessagePrefix(ns.PREFIX)
+end
+
+ns.On("LOGIN", function()
+	ns.Every(Comm.SEND_INTERVAL, "send pump", Comm.Pump, true)
+	ns.Every(30, "assembler gc", function()
+		local now = ns.Now()
+		for _, a in pairs(assemblers) do Codec.Gc(a, now) end
+	end)
+end)
+
+ns.Status(function()
+	local s = Comm.stats
+	return ns.L.STATUS_COMM:format(s.sent, s.recv, #queue, s.fails, s.dropped)
+end)
