@@ -287,7 +287,7 @@ local function GuildPeople(channel)
 	local list = {}
 	for _, m in ipairs(ns.Roster.members or {}) do
 		local rank = m.rank or 9
-		local officer = rank <= C.OFFICER_RANK
+		local officer = ns.Roster.IsOfficerRank(rank)
 		if (channel == "G" and m.online) or (channel == "O" and officer) then
 			list[#list + 1] = {
 				name = U.Display(m.name), class = m.class, level = m.level, online = m.online, days = m.days,

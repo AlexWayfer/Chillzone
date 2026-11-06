@@ -34,10 +34,16 @@ function Census.Users()
 	return n
 end
 
+-- Кандидат в репортёры: глава, офицер или связной по моему ростеру; пока
+-- Config.TRUST_ANY_MEMBER — любой согильдиец из ростера.
+local function Trusted(key)
+	return ns.Roster.TrustOfKey(key) ~= nil
+end
+
 function Census.Reporter()
 	if not ns.myKey then return nil end
 	local now = ns.Now()
-	return Codec.PickReporter(ns.myKey, ns.char and ns.char.shareZones or false, Live(now), now, C.PEER_WINDOW)
+	return Codec.PickReporter(ns.myKey, ns.char and ns.char.shareZones or false, Live(now), now, C.PEER_WINDOW, Trusted)
 end
 
 function Census.IsReporter()
@@ -163,4 +169,13 @@ ns.Status(function()
 	local n = 0
 	for _ in pairs(Live(ns.Now())) do n = n + 1 end
 	return L.STATUS_CENSUS:format(Census.ReporterName() or "—", Census.IsReporter() and L.YES or L.NO, n, ns.char.shareZones and L.YES or L.NO)
+end)
+
+ns.Status(function()
+	if not ns.IsMember() then return nil end
+	if C.TRUST_ANY_MEMBER then return L.STATUS_TRUST_ANY end
+	if not Census.Reporter() then return L.STATUS_NO_REPORTER:format(C.RELAY_RANK) end
+	local role = ns.MyTrust()
+	local me = role == "leader" and L.TRUST_LEADER or role == "officer" and L.TRUST_OFFICER or role == "rank" and L.TRUST_RANK or L.TRUST_NONE
+	return L.STATUS_TRUST:format(me, C.RELAY_RANK)
 end)

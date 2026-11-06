@@ -12,7 +12,7 @@ local World = {}
 World.__index = World
 
 function Wow.World()
-	local w = setmetatable({ now = 0, timers = {}, seq = 0, clients = {}, guilds = {}, channels = {}, log = {}, channelDisabled = false }, World)
+	local w = setmetatable({ now = 0, timers = {}, seq = 0, clients = {}, guilds = {}, channels = {}, log = {} }, World)
 	return w
 end
 
@@ -40,8 +40,12 @@ end
 ---------------------------------------------------------------------------
 -- Гильдии: участники — клиенты или просто строки ростера (не в игре)
 ---------------------------------------------------------------------------
-function World:Guild(name, ranks)
-	local g = { name = name, ranks = ranks or { "Глава", "Офицер", "Ветеран", "Рядовой" }, members = {} }
+-- officers — rankIndex званий с игровым флагом «офицер» (по умолчанию 0 и 1).
+function World:Guild(name, ranks, officers)
+	local g = {
+		name = name, ranks = ranks or { "Глава", "Офицер", "Ветеран", "Рядовой" }, members = {},
+		officers = officers or { [0] = true, [1] = true },
+	}
 	self.guilds[name] = g
 	return g
 end
@@ -97,7 +101,7 @@ end
 
 function World:Say(from, msg, id)
 	local chan = from.joinedById[id]
-	if not chan or self.channelDisabled then return end
+	if not chan then return end
 	self.log[#self.log + 1] = { t = self.now, from = from.first .. " " .. from.surname, dist = "CHANNEL", msg = msg }
 	for _, c in ipairs(self.clients) do
 		if c.online and c.joined[chan] then
@@ -238,7 +242,18 @@ local function Env(c)
 		if not r or r.online then return nil end
 		return 0, 0, math.floor(r.days or 0), 0
 	end
-	env.C_GuildInfo = { GuildRoster = function() w:Schedule(w.now + 0.2, function() c:Fire("GUILD_ROSTER_UPDATE") end, c) end }
+	env.C_GuildInfo = {
+		GuildRoster = function() w:Schedule(w.now + 0.2, function() c:Fire("GUILD_ROSTER_UPDATE") end, c) end,
+		-- Права звания rankOrder (с 1): таблица из 24 флагов, [22] — «офицер».
+		GuildControlGetRankFlags = function(order)
+			local g = c.guild and w.guilds[c.guild]
+			assert(type(order) == "number" and order >= 1, "звания считаются с 1")
+			local flags = {}
+			for i = 1, 24 do flags[i] = false end
+			if g and order <= #g.ranks then flags[22] = g.officers[order - 1] == true end
+			return flags
+		end,
+	}
 	env.C_ChatInfo = {
 		RegisterAddonMessagePrefix = function() return true end,
 		SendAddonMessage = function(prefix, msg, dist, target)
@@ -309,7 +324,8 @@ local function Env(c)
 	return setmetatable(env, { __index = _G })
 end
 
--- opts: first, surname, realm, faction, guild, rank, class, level, zone, relays (Config.RELAYS)
+-- opts: first, surname, realm, faction, guild, rank, class, level, zone, relays (Config.RELAYS),
+-- config (поля Config поверх Config.lua)
 function World:Client(opts)
 	local c = setmetatable({
 		world = self, first = opts.first, surname = opts.surname, realm = opts.realm or "CAMWOWUS2Realm7PvE",
@@ -323,7 +339,10 @@ function World:Client(opts)
 	for _, f in ipairs(T.tocFiles()) do
 		if not f:find("^libs/") then
 			T.load({ f }, c.env, c.ns)
-			if f == "Config.lua" then c.ns.Config.RELAYS = opts.relays or {} end
+			if f == "Config.lua" then
+				c.ns.Config.RELAYS = opts.relays or {}
+				for k, v in pairs(opts.config or {}) do c.ns.Config[k] = v end
+			end
 		end
 	end
 	self.clients[#self.clients + 1] = c
@@ -352,9 +371,16 @@ function Client:CallHooks(name, ...)
 	for _, fn in ipairs(self.hooks[name] or {}) do fn(...) end
 end
 
+-- Слэш-команда ищется, как в игре: по глобалам SLASH_<ключ><n>, которые завёл аддон.
 function Client:Slash(cmd, text)
-	local key = ({ ["/cz"] = "CHILLZONE", ["/cz1"] = "CHILLZONEA", ["/cz2"] = "CHILLZONEC", ["/cz3"] = "CHILLZONEL" })[cmd]
-	self.env.SlashCmdList[key](text or "")
+	for key, fn in pairs(self.env.SlashCmdList) do
+		local i = 1
+		while rawget(self.env, "SLASH_" .. key .. i) do
+			if rawget(self.env, "SLASH_" .. key .. i) == cmd then return fn(text or "") end
+			i = i + 1
+		end
+	end
+	error("нет слэш-команды " .. cmd)
 end
 
 function Client:Logout()

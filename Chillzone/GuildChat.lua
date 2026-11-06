@@ -4,7 +4,6 @@
 local ADDON, ns = ...
 
 local U = ns.Util
-local C = ns.Config
 local L = ns.L
 
 local GuildChat = {}
@@ -20,7 +19,7 @@ function GuildChat.CanOfficer()
 		local ok, yes = pcall(can)
 		if ok and yes ~= nil then return yes and true or false end
 	end
-	return rank ~= nil and rank <= C.OFFICER_RANK
+	return rank ~= nil and ns.Roster.IsOfficerRank(rank)
 end
 
 -- Класс автора: по GUID из события, иначе по ростеру.

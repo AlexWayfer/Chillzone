@@ -21,13 +21,15 @@ local function Reject(why)
 	return false, why
 end
 
--- Подпись руководства: глава и офицеры. Разные свежие подписи от разных
+-- Подпись руководства: глава, офицеры и связные. Разные свежие подписи от разных
 -- отправителей — повод пометить гильдию «!».
 function Data.Signature(r)
-	local keys = {}
+	local keys, vets = {}, {}
 	for _, o in ipairs(r.officers or {}) do keys[#keys + 1] = (U.Key(o.name) or "?") .. ":" .. (o.rank or 1) end
+	for _, o in ipairs(r.veterans or {}) do vets[#vets + 1] = U.Key(o.name) or "?" end
 	table.sort(keys)
-	return (U.Key(r.leader) or "") .. "|" .. table.concat(keys, ",")
+	table.sort(vets)
+	return (U.Key(r.leader) or "") .. "|" .. table.concat(keys, ",") .. "|" .. table.concat(vets, ",")
 end
 
 function Data.ClaimGuild(originKey, guildKey, now)
@@ -139,14 +141,18 @@ function Data.Main(now)
 	return nil
 end
 
--- Глава или офицер главной гильдии по её отчёту: true, false или nil (отчёта нет).
-function Data.IsMainLeader(name, now)
+-- Глава, офицер или связной главной гильдии по её отчёту — те, кто может быть реле:
+-- true, false или nil (отчёта нет).
+function Data.IsMainTrusted(name, now)
 	local row = Data.Main(now)
 	if not row then return nil end
 	local key = U.Key(name)
+	if not key then return false end
 	if U.Key(row.r.leader) == key then return true end
-	for _, o in ipairs(row.r.officers or {}) do
-		if U.Key(o.name) == key then return true end
+	for _, list in ipairs({ row.r.officers or {}, row.r.veterans or {} }) do
+		for _, o in ipairs(list) do
+			if U.Key(o.name) == key then return true end
+		end
 	end
 	return false
 end

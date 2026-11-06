@@ -9,6 +9,7 @@ local Roster = {}
 ns.Roster = Roster
 
 Roster.byKey = {} -- [Key] = rankIndex
+Roster.rankNames = {} -- [Key] = название звания
 Roster.members = {} -- строки ростера: { name, key, rank, rankName, level, class, zone, online, days }
 Roster.report = nil -- последний отчёт о своей гильдии
 Roster.guild = nil
@@ -42,13 +43,69 @@ function Roster.MyRank()
 	return rank
 end
 
+---------------------------------------------------------------------------
+-- Офицерские звания. Как в ChillZoneUnion 0.6: офицер — не ранг 0–1, а звание с игровым
+-- флагом «офицер» (галочка OfficerCheckbox в настройках гильдии, флаг 22 у
+-- C_GuildInfo.GuildControlGetRankFlags; звания там считаются с 1, ранги ростера — с 0).
+-- Номер, название и право приглашать роли не решают. Если игра флаги не отдала (нет API,
+-- ошибка, пустая таблица, скрытое значение) — по Config.OFFICER_RANK, как раньше.
+---------------------------------------------------------------------------
+local OFFICER_FLAG = 22
+local rankOfficer = {} -- [rankIndex] = true/false, сбрасывается при каждом скане
+
+local function Secret(v)
+	return type(issecretvalue) == "function" and issecretvalue(v)
+end
+
+-- Флаг «офицер» звания rankIndex в моей гильдии: true, false или nil (игра не сказала).
+function Roster.RankFlagOfficer(rank)
+	local info = rawget(_G, "C_GuildInfo")
+	local get = type(info) == "table" and info.GuildControlGetRankFlags
+	if type(get) ~= "function" then return nil end
+	local ok, flag = pcall(function()
+		local flags = get(rank + 1)
+		if Secret(flags) or type(flags) ~= "table" or next(flags) == nil then return nil end
+		local v = flags[OFFICER_FLAG]
+		if Secret(v) or type(v) ~= "boolean" then return nil end
+		return v
+	end)
+	if ok then return flag end
+	return nil
+end
+
+-- Офицерское ли звание rankIndex в моей гильдии. Глава (0) — всегда.
+function Roster.IsOfficerRank(rank)
+	if type(rank) ~= "number" then return false end
+	if rank == 0 then return true end
+	local v = rankOfficer[rank]
+	if v == nil then
+		v = Roster.RankFlagOfficer(rank)
+		if v == nil then v = rank <= C.OFFICER_RANK end
+		rankOfficer[rank] = v
+	end
+	return v
+end
+
+-- Роль согильдийца в связи (U.TrustRole) по моему ростеру; nil — не в гильдии или рядовой
+-- (когда Config.TRUST_ANY_MEMBER выключен).
+function Roster.TrustOfKey(key)
+	local rank = key and Roster.byKey[key]
+	if rank == nil then return nil end
+	return U.TrustRole(rank, Roster.rankNames[key], Roster.IsOfficerRank(rank))
+end
+
+function Roster.TrustOf(name)
+	return Roster.TrustOfKey(U.Key(name))
+end
+
 -- Чистая сборка отчёта из строк ростера (для тестов и для Scan).
--- rows: { name, rank, rankName, level, class, zoneKey, online, days }
+-- rows: { name, rank, rankName, officer, level, class, zoneKey, online, days }; officer nil —
+-- по Config.OFFICER_RANK.
 function Roster.Build(guild, rows, numOnline, faction, st)
 	local r = {
 		guild = guild, total = #rows, online = 0, users = 0,
 		zones = {}, classes = {}, levels = { 0, 0, 0, 0, 0, 0, 0 },
-		ranks = {}, officers = {}, inactive7 = 0, inactive30 = 0,
+		ranks = {}, officers = {}, veterans = {}, inactive7 = 0, inactive30 = 0,
 		faction = faction, st = st,
 	}
 	local levelSum = 0
@@ -65,11 +122,16 @@ function Roster.Build(guild, rows, numOnline, faction, st)
 		if days >= 7 then r.inactive7 = r.inactive7 + 1 end
 		if days >= 30 then r.inactive30 = r.inactive30 + 1 end
 		local short = U.Display(m.name)
+		local officer = m.officer
+		if officer == nil then officer = rank <= C.OFFICER_RANK end
 		if rank == 0 then
 			r.leader, r.leaderOnline, r.leaderDays = short, m.online and true or false, math.floor(days)
 			r.leaderClass, r.leaderLevel = m.class, m.level
-		elseif rank <= C.OFFICER_RANK then
+		elseif officer then
 			r.officers[#r.officers + 1] = { name = short, online = m.online and true or false, days = math.floor(days), class = m.class, level = m.level, rank = rank }
+		elseif U.IsRelayRankName(m.rankName) then
+			-- Связные: по ним другие гильдии узнают реле главной гильдии.
+			r.veterans[#r.veterans + 1] = { name = short, online = m.online and true or false, days = math.floor(days), class = m.class, level = m.level, rank = rank }
 		end
 		if m.online then
 			r.online = r.online + 1
@@ -89,6 +151,7 @@ function Roster.Build(guild, rows, numOnline, faction, st)
 		if a.rank ~= b.rank then return a.rank < b.rank end
 		return a.name < b.name
 	end)
+	table.sort(r.veterans, function(a, b) return a.name < b.name end)
 	return r
 end
 
@@ -99,7 +162,8 @@ function Roster.Scan()
 	local numTotal, numOnline = GetNumGuildMembers()
 	if not numTotal or numTotal == 0 then return end
 	lastScan = ns.Now()
-	local rows, byKey = {}, {}
+	rankOfficer = {} -- права званий могли поменяться
+	local rows, byKey, rankNames = {}, {}, {}
 	for i = 1, numTotal do
 		local name, rankName, rankIndex, level, _, zone, _, _, isOnline, _, classFile = GetGuildRosterInfo(i)
 		if name then
@@ -107,9 +171,11 @@ function Roster.Scan()
 			if key and byKey[key] == nil then
 				rankIndex = rankIndex or 9
 				byKey[key] = rankIndex
+				rankNames[key] = rankName
 				local online = isOnline and true or false
 				rows[#rows + 1] = {
 					name = U.Normal(name), key = key, rank = rankIndex, rankName = rankName,
+					officer = Roster.IsOfficerRank(rankIndex),
 					level = level or 1, class = classFile, online = online,
 					zone = online and zone or nil,
 					zoneKey = online and ns.Zones.KeyForName(zone) or nil,
@@ -118,7 +184,7 @@ function Roster.Scan()
 			end
 		end
 	end
-	Roster.byKey, Roster.members, Roster.guild = byKey, rows, guild
+	Roster.byKey, Roster.rankNames, Roster.members, Roster.guild = byKey, rankNames, rows, guild
 	local r = Roster.Build(guild, rows, numOnline, ns.faction, ns.ServerTime())
 	if ns.Census then r.users = ns.Census.Users() end
 	Roster.report = r
@@ -152,12 +218,21 @@ ns.RegisterEvent("PLAYER_GUILD_UPDATE", function(unit)
 	ns.After(2, "guild changed", function()
 		guildChangeQueued = false
 		if not ns.MyGuild() then
-			Roster.byKey, Roster.members, Roster.report, Roster.guild = {}, {}, nil, nil
+			Roster.byKey, Roster.rankNames, Roster.members, Roster.report, Roster.guild = {}, {}, {}, nil, nil
 		end
+		rankOfficer = {}
 		Roster.RequestScan(true)
 		ns.Fire("GUILD_CHANGED")
 	end)
 end)
+
+-- Глава поменял права званий: офицеры могли стать другими.
+local function RanksChanged()
+	rankOfficer = {}
+	if ns.me then Roster.RequestScan(true) end
+end
+ns.RegisterEvent("GUILD_RANKS_UPDATE", RanksChanged)
+ns.RegisterEvent("GUILD_RANKS_UPDATE_ACTIVE_PLAYER", RanksChanged)
 
 ns.On("LOGIN", function()
 	ns.After(6, "first scan", function() Roster.RequestScan(true) end)

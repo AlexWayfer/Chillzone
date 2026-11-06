@@ -2,6 +2,10 @@
 -- доставляются, а GUILD и WHISPER доставляются. Поэтому данные между гильдиями ходят
 -- шёпотом через реле: автор → реле (RL) → репортёр каждой гильдии (RM) → его гильдия (RG).
 -- Схема — упрощённая версия Olympus Relay.lua.
+-- Доверие (U.TrustRole): пока Config.TRUST_ANY_MEMBER, реле — любой участник главной гильдии,
+-- репортёр — любой участник своей. Иначе — по игровому званию: глава, офицеры и связные
+-- (Config.RELAY_RANK); RG по GUILD тогда принимается только от них, потому что имя автора
+-- внутри конверта не проверить и рядовой не может переслать «чужое».
 local ADDON, ns = ...
 
 local U = ns.Util
@@ -54,11 +58,20 @@ end
 function Relay.IAmRelay()
 	if not ns.myKey then return false end
 	if IsSeed(ns.myKey) then return true end
-	local g, rank = ns.MyGuild()
-	return g ~= nil and U.IsMainGuild(g) and rank ~= nil and rank <= C.OFFICER_RANK
+	local g = ns.MyGuild()
+	return g ~= nil and U.IsMainGuild(g) and ns.MyTrust() ~= nil
 end
 
--- Откуда доверие к реле: "seed", "manual", "officer", "gossip" — или nil.
+-- Выученное реле годится, если отчёт главной гильдии его не опровергает. В отчёте только
+-- глава, офицеры и связные: пока реле может быть любой участник, сверять не с чем.
+local function MainVouches(name)
+	if C.TRUST_ANY_MEMBER then return true end
+	return ns.Data.IsMainTrusted(name) ~= false
+end
+
+-- Откуда доверие к реле: "seed", "manual", "officer" (глава или офицер главной гильдии по
+-- моему ростеру), "rank" (связной главной гильдии), "member" (участник главной гильдии, пока
+-- Config.TRUST_ANY_MEMBER), "gossip" — или nil.
 function Relay.TrustOf(name)
 	local key = U.Key(name)
 	if not key then return nil end
@@ -68,13 +81,13 @@ function Relay.TrustOf(name)
 	if store and store.manual[key] then return "manual" end
 	local g = ns.MyGuild()
 	if g and U.IsMainGuild(g) then
-		local rank = ns.Roster.RankOf(name)
-		if rank and rank <= C.OFFICER_RANK then return "officer" end
+		local role = ns.Roster.TrustOf(name)
+		if role == "leader" or role == "officer" then return "officer" end
+		if role then return role end
 	end
 	local l = store and store.relays[key]
 	if l and ns.ServerTime() - (l.t or 0) <= C.RELAY_LEARNED_TTL then
-		-- Выученное реле должно быть главой или офицером главной гильдии, если её отчёт известен.
-		if ns.Data.IsMainLeader(name) == false then return nil end
+		if not MainVouches(name) then return nil end
 		return "gossip"
 	end
 	return nil
@@ -381,7 +394,7 @@ ns.Comm.On("RY", function(msg, sender, dist)
 	local changed = false
 	for _, name in ipairs(Codec.DecodeRelayList(msg, C.RELAY_GOSSIP) or {}) do
 		local k = U.Key(name)
-		if k and k ~= ns.myKey and not Relay.TrustOf(name) and ns.Data.IsMainLeader(name) ~= false then
+		if k and k ~= ns.myKey and not Relay.TrustOf(name) and MainVouches(name) then
 			store.relays[k] = { name = name, t = ns.ServerTime(), by = e.key }
 			changed = true
 		elseif k and store.relays[k] then
@@ -413,8 +426,15 @@ ns.Comm.On("RM", function(msg, sender, dist)
 	Deliver(mode, origin, inner, { via = "RM", relay = sender }, true)
 end)
 
+-- RG раздаёт репортёр (или реле-репортёр) своей гильдии. Автор внутри конверта — со слов
+-- отправителя, поэтому конверт принимается только от главы, офицера или связного.
 ns.Comm.On("RG", function(msg, sender, dist)
 	if dist ~= "GUILD" then return end
+	if not ns.Roster.TrustOf(sender) then
+		Relay.stats.untrusted = Relay.stats.untrusted + 1
+		ns.Log("RG от %s отклонён: не глава, не офицер и не «%s»", U.Display(sender), C.RELAY_RANK)
+		return
+	end
 	local kind, mode, origin, inner = Codec.DecodeRelay(msg)
 	if kind ~= "RG" then return end
 	Deliver(mode, origin, inner, { via = "RG", relay = sender }, false)
