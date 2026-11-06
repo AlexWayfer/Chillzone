@@ -1,0 +1,32 @@
+name: Ошибка
+description: Что-то работает не так, как ожидалось
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Версия Chillzone
+      description: Из имени скачанного архива `Chillzone-X.Y.Z.zip` или строки `## Version` в `Chillzone.toc`.
+      placeholder: "0.2.1"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+      description: Что вы делали, что ожидали и что получилось.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Как повторить
+      placeholder: |
+        1. ...
+        2. ...
+  - type: textarea
+    id: diag
+    attributes:
+      label: Ошибки Lua и диагностика
+      description: Текст ошибки Lua (если была) и вывод `/cz status`. Главы и офицеры могут приложить скриншот вкладки «Отладка» (`/cz diag`).
+      render: text
