@@ -33,6 +33,74 @@ end
 
 local function Key(c, name) return c.ns.Util.Key(name) end
 
+-- Настоящие ростер и перепись, но без фоновых таймеров: проверяем точные границы
+-- REPORT_EVERY / REPORT_IDLE и не смешиваем отправку отчёта с доставкой по сети.
+local function CensusReports(withVeteran)
+	local w = Wow.World()
+	w:Guild("Чиллзон")
+	if withVeteran then
+		w:AddOffline("Чиллзон", "Тихий Ветеран-CAMWOWUS2Realm7PvE", 2, 60, "WARRIOR", 3)
+	end
+	local c = w:Client({ first = "Карл", surname = "Великий", guild = "Чиллзон", rank = 0 })
+	local reports = {}
+	c.ns.Relay.Out = function(mode, raw)
+		T.eq(mode, "L", "режим переписи")
+		reports[#reports + 1] = raw
+	end
+	local function reportAt(seconds)
+		w.now = 1000 + seconds
+		c.ns.Roster.Scan()
+		local st = c.ns.Roster.report.st
+		c.ns.Census.MaybeReport(false)
+		T.eq(c.ns.Roster.report.st, st, "сравнение не меняет время исходного ростера")
+	end
+	return w, c, reports, reportAt
+end
+
+for _, withVeteran in ipairs({ false, true }) do
+	local hasVeteran = withVeteran
+	T.test("census: неизменный отчёт ждёт REPORT_IDLE, связные " .. (hasVeteran and "есть" or "отсутствуют"), function()
+		local _, c, reports, reportAt = CensusReports(hasVeteran)
+		reportAt(0)
+		T.eq(#reports, 1, "первый отчёт отправлен")
+		local first = assert(c.ns.Codec.DecodeReport(reports[1]))
+		T.eq(first.st, c.ns.ServerTime(), "в отправленном отчёте настоящее время")
+		T.eq(#first.veterans, hasVeteran and 1 or 0, "связные сохранены в отчёте")
+		reportAt(c.ns.Config.REPORT_EVERY)
+		T.eq(#reports, 1, "новое время не считается изменением переписи")
+		reportAt(c.ns.Config.REPORT_IDLE - 1)
+		T.eq(#reports, 1, "до REPORT_IDLE повторов нет")
+		reportAt(c.ns.Config.REPORT_IDLE)
+		T.eq(#reports, 2, "по REPORT_IDLE перепись обновляется")
+		local refreshed = assert(c.ns.Codec.DecodeReport(reports[2]))
+		T.eq(refreshed.st, c.ns.ServerTime(), "повторный отчёт содержит свежее время")
+		T.eq(refreshed.st - first.st, c.ns.Config.REPORT_IDLE, "время не обнулено")
+	end)
+end
+
+T.test("census: изменение состава отправляется по REPORT_EVERY", function()
+	local w, c, reports, reportAt = CensusReports(false)
+	reportAt(0)
+	w:AddOffline("Чиллзон", "Новый Участник-CAMWOWUS2Realm7PvE", 3, 20, "MAGE", 1)
+	reportAt(c.ns.Config.REPORT_EVERY - 6)
+	T.eq(#reports, 1, "изменение ждёт обычного интервала")
+	reportAt(c.ns.Config.REPORT_EVERY)
+	T.eq(#reports, 2, "изменённый состав не ждёт REPORT_IDLE")
+	T.eq(assert(c.ns.Codec.DecodeReport(reports[2])).total, 2, "новый участник учтён")
+end)
+
+T.test("census: изменение списка связных не теряется при сравнении", function()
+	local w, c, reports, reportAt = CensusReports(true)
+	reportAt(0)
+	-- Меняется только имя связного: все числовые поля и распределение званий прежние.
+	w.guilds["Чиллзон"].members[1].full = "Другой Ветеран-CAMWOWUS2Realm7PvE"
+	reportAt(c.ns.Config.REPORT_EVERY)
+	T.eq(#reports, 2, "изменённый список учтён до REPORT_IDLE")
+	local changed = assert(c.ns.Codec.DecodeReport(reports[2]))
+	T.eq(#changed.veterans, 1, "новый связной сохранён")
+	T.eq(changed.veterans[1].name, "Другой Ветеран", "имя связного")
+end)
+
 T.test("relay: глобалы не утекают", function()
 	local _, c = Build({ run = 5 })
 	for name, cl in pairs(c) do
