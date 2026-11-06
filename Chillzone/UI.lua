@@ -186,9 +186,16 @@ local function SideTab(i, def)
 	bg:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
 	bg:SetSize(64, 64)
 	bg:SetPoint("TOPLEFT", -3, 11)
-	b:SetNormalTexture(FirstIcon(def.icons))
+	-- Значок — своя текстура, а не NormalTexture: её не прячет ни нажатие, ни выбор вкладки.
+	local icon = b:CreateTexture(nil, "ARTWORK")
+	icon:SetAllPoints()
+	icon:SetTexture(FirstIcon(def.icons))
+	b.icon = icon
 	b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	b:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD")
+	-- SetCheckedTexture режим наложения не принимает: без ADD чёрная середина рамки закрывает значок.
+	b:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight")
+	local checked = b.GetCheckedTexture and b:GetCheckedTexture()
+	if checked and checked.SetBlendMode then checked:SetBlendMode("ADD") end
 	b:SetScript("OnClick", function() ns.SafeCall("tab " .. def.key, SelectTab, def.key) end)
 	SetTip(b, function(tt) tt:AddLine(L[def.text], 1, 1, 1) end)
 	tabs[def.key] = b

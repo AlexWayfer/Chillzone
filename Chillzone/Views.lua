@@ -116,7 +116,7 @@ function Views.Census()
 		local leader = s.r.leader and (Dot(s.fresh and s.r.leaderOnline) .. Views.Name(s.r.leader, s.r.leaderClass)) or GREY .. "—|r"
 		lines[#lines + 1] = { text = GuildLabel(s), right = right, tip = function(tt) Views.GuildTip(tt, s) end }
 		lines[#lines + 1] = {
-			text = GREY .. L.CENSUS_LEADER .. "|r " .. leader .. GREY .. "  · " .. (s.mine and L.TIP_FROM_ROSTER or Views.Ago(s.age)) .. "|r",
+			text = GREY .. L.CENSUS_LEADER .. "|r " .. leader .. GREY .. ", " .. (s.mine and L.TIP_FROM_ROSTER or Views.Ago(s.age)) .. "|r",
 			indent = 1, tip = function(tt) Views.GuildTip(tt, s) end,
 		}
 	end
@@ -129,7 +129,7 @@ end
 local function PersonTip(p, role, guild)
 	return function(tt)
 		tt:AddLine(Views.Name(p.name, p.class))
-		tt:AddLine(role .. " · " .. Codec.Plain(guild), 0.8, 0.8, 0.8)
+		tt:AddLine(role .. ", " .. Codec.Plain(guild), 0.8, 0.8, 0.8)
 		if p.level and p.level > 0 then tt:AddLine(L.TIP_LEVEL:format(p.level), 0.8, 0.8, 0.8) end
 		tt:AddLine(p.online and L.ONLINE or L.OFFLINE_DAYS:format(p.days or 0), 0.6, 0.6, 0.6)
 	end
@@ -305,9 +305,9 @@ end
 function Views.PersonTip(tt, p)
 	tt:AddLine(Views.Name(p.name, p.class))
 	local role = Views.Role(p)
-	tt:AddLine((role ~= "" and (role .. " · ") or "") .. Codec.Plain(p.guild or "?"), 0.8, 0.8, 0.8)
+	tt:AddLine((role ~= "" and (role .. ", ") or "") .. Codec.Plain(p.guild or "?"), 0.8, 0.8, 0.8)
 	if p.level and p.level > 0 then
-		tt:AddLine(L.TIP_LEVEL:format(p.level) .. (p.class and L.CLASS[p.class] and (" · " .. L.CLASS[p.class]) or ""), 0.8, 0.8, 0.8)
+		tt:AddLine(L.TIP_LEVEL:format(p.level) .. (p.class and L.CLASS[p.class] and (", " .. L.CLASS[p.class]) or ""), 0.8, 0.8, 0.8)
 	end
 	if p.zone and p.online then tt:AddLine(Codec.Plain(p.zone), 0.8, 0.8, 0.8) end
 	if p.role ~= "active" then tt:AddLine(p.online and L.ONLINE or L.OFFLINE_DAYS:format(p.days or 0), 0.6, 0.6, 0.6) end
