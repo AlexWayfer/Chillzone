@@ -1,6 +1,6 @@
 # Chillzone
 
-Аддон для **WoW: Forever** (Classic Era). Связывает все гильдии, в названии которых есть «Чиллзон».
+Аддон для **WoW: Forever**. Связывает все гильдии, в названии которых есть «Чиллзон».
 
 - **Общий чат** на три уровня: все участники, офицеры, главы.
 - **Окно** в стиле «Гильдии и сообщества»: каналы, сообщения, люди в сети.
@@ -17,7 +17,7 @@
 ## Установка
 
 1. Скачайте `Chillzone-<версия>.zip` из [последнего релиза](https://github.com/FiNEk/Chillzone/releases/latest).
-2. Распакуйте папку `Chillzone` в `World of Warcraft\_classic_era_\Interface\AddOns\`.
+2. Распакуйте папку `Chillzone` в `World of Warcraft\_forever_\Interface\AddOns\`.
 3. Перезапустите игру и проверьте: `/cz status`.
 
 ## Команды
