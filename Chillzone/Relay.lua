@@ -2,6 +2,10 @@
 -- доставляются, а GUILD и WHISPER доставляются. Поэтому данные между гильдиями ходят
 -- шёпотом через реле: автор → реле (RL) → репортёр каждой гильдии (RM) → его гильдия (RG).
 -- Схема — упрощённая версия Olympus Relay.lua.
+-- Доверие (U.TrustRole): пока Config.TRUST_ANY_MEMBER, реле — любой участник главной гильдии,
+-- репортёр — любой участник своей. Иначе — по игровому званию: глава, офицеры и связные
+-- (Config.RELAY_RANK); RG по GUILD тогда принимается только от них, потому что имя автора
+-- внутри конверта не проверить и рядовой не может переслать «чужое».
 local ADDON, ns = ...
 
 local U = ns.Util
@@ -23,6 +27,7 @@ local lastPong = {} -- [Key] = когда отвечали RY
 Relay.stats = { forwarded = 0, delivered = 0, dropped = 0, untrusted = 0 }
 
 local REG_TTL = 2 * C.REG_EVERY + 30
+Relay.REG_TTL = REG_TTL
 local WHISPER_FRESH = 10 -- системное «нет такого игрока» относится к шёпоту не старше
 
 local function Now() return ns.Now() end
@@ -54,11 +59,20 @@ end
 function Relay.IAmRelay()
 	if not ns.myKey then return false end
 	if IsSeed(ns.myKey) then return true end
-	local g, rank = ns.MyGuild()
-	return g ~= nil and U.IsMainGuild(g) and rank ~= nil and rank <= C.OFFICER_RANK
+	local g = ns.MyGuild()
+	return g ~= nil and U.IsMainGuild(g) and ns.MyTrust() ~= nil
 end
 
--- Откуда доверие к реле: "seed", "manual", "officer", "gossip" — или nil.
+-- Выученное реле годится, если отчёт главной гильдии его не опровергает. В отчёте только
+-- глава, офицеры и связные: пока реле может быть любой участник, сверять не с чем.
+local function MainVouches(name)
+	if C.TRUST_ANY_MEMBER then return true end
+	return ns.Data.IsMainTrusted(name) ~= false
+end
+
+-- Откуда доверие к реле: "seed", "manual", "officer" (глава или офицер главной гильдии по
+-- моему ростеру), "rank" (связной главной гильдии), "member" (участник главной гильдии, пока
+-- Config.TRUST_ANY_MEMBER), "gossip" — или nil.
 function Relay.TrustOf(name)
 	local key = U.Key(name)
 	if not key then return nil end
@@ -68,16 +82,27 @@ function Relay.TrustOf(name)
 	if store and store.manual[key] then return "manual" end
 	local g = ns.MyGuild()
 	if g and U.IsMainGuild(g) then
-		local rank = ns.Roster.RankOf(name)
-		if rank and rank <= C.OFFICER_RANK then return "officer" end
+		local role = ns.Roster.TrustOf(name)
+		if role == "leader" or role == "officer" then return "officer" end
+		if role then return role end
 	end
 	local l = store and store.relays[key]
 	if l and ns.ServerTime() - (l.t or 0) <= C.RELAY_LEARNED_TTL then
-		-- Выученное реле должно быть главой или офицером главной гильдии, если её отчёт известен.
-		if ns.Data.IsMainLeader(name) == false then return nil end
+		if not MainVouches(name) then return nil end
 		return "gossip"
 	end
 	return nil
+end
+
+-- Глава или офицер главной гильдии: по моему ростеру, если я в ней, иначе по её отчёту.
+-- Такие реле выбираются первыми (Relay.Pick).
+function Relay.IsMainOfficer(name)
+	local g = ns.MyGuild()
+	if g and U.IsMainGuild(g) then
+		local role = ns.Roster.TrustOf(name)
+		return role == "leader" or role == "officer"
+	end
+	return ns.Data.IsMainOfficer(name) == true
 end
 
 local function Entry(key, name)
@@ -233,13 +258,19 @@ local function FlushHold()
 	end
 end
 
--- Реле, через которое пойдёт сообщение моей гильдии сейчас: запись known или nil.
+-- Реле, через которое пойдёт сообщение моей гильдии сейчас: запись known или nil. Из
+-- отвечающих реле первыми идут глава и офицеры главной гильдии, остальные — если ни один из
+-- них не отвечает. Внутри группы реле меняется раз в RELAY_WINDOW (по хешу гильдии).
 function Relay.Pick()
 	local now = Now()
-	local keys = {}
+	local officers, others = {}, {}
 	for _, e in ipairs(Relay.Candidates()) do
-		if Verified(e, now) then keys[#keys + 1] = e.key end
+		if Verified(e, now) then
+			local list = Relay.IsMainOfficer(e.name) and officers or others
+			list[#list + 1] = e.key
+		end
 	end
+	local keys = #officers > 0 and officers or others
 	local pick = Codec.PickRelay(MyGuildKey() or "", keys, now, C.RELAY_WINDOW)
 	return pick and known[pick] or nil
 end
@@ -381,7 +412,7 @@ ns.Comm.On("RY", function(msg, sender, dist)
 	local changed = false
 	for _, name in ipairs(Codec.DecodeRelayList(msg, C.RELAY_GOSSIP) or {}) do
 		local k = U.Key(name)
-		if k and k ~= ns.myKey and not Relay.TrustOf(name) and ns.Data.IsMainLeader(name) ~= false then
+		if k and k ~= ns.myKey and not Relay.TrustOf(name) and MainVouches(name) then
 			store.relays[k] = { name = name, t = ns.ServerTime(), by = e.key }
 			changed = true
 		elseif k and store.relays[k] then
@@ -413,8 +444,15 @@ ns.Comm.On("RM", function(msg, sender, dist)
 	Deliver(mode, origin, inner, { via = "RM", relay = sender }, true)
 end)
 
+-- RG раздаёт репортёр (или реле-репортёр) своей гильдии. Автор внутри конверта — со слов
+-- отправителя, поэтому конверт принимается только от главы, офицера или связного.
 ns.Comm.On("RG", function(msg, sender, dist)
 	if dist ~= "GUILD" then return end
+	if not ns.Roster.TrustOf(sender) then
+		Relay.stats.untrusted = Relay.stats.untrusted + 1
+		ns.Log("RG от %s отклонён: не глава, не офицер и не «%s»", U.Display(sender), C.RELAY_RANK)
+		return
+	end
 	local kind, mode, origin, inner = Codec.DecodeRelay(msg)
 	if kind ~= "RG" then return end
 	Deliver(mode, origin, inner, { via = "RG", relay = sender }, false)
@@ -506,12 +544,14 @@ function Relay.Known() return known end
 function Relay.Reporters() return reporters end
 function Relay.HoldSize() return #hold end
 
+-- Состояние реле для показа: подпись и код ("down", "ok", "asked", "unknown").
 local function StateOf(e, now)
-	if e.down and now < e.down then return L.RELAY_DOWN end
-	if Verified(e, now) then return L.RELAY_OK end
-	if e.asked then return L.RELAY_ASKED end
-	return L.RELAY_UNKNOWN
+	if e.down and now < e.down then return L.RELAY_DOWN, "down" end
+	if Verified(e, now) then return L.RELAY_OK, "ok" end
+	if e.asked then return L.RELAY_ASKED, "asked" end
+	return L.RELAY_UNKNOWN, "unknown"
 end
+Relay.StateOf = StateOf
 
 ns.Command("relay", function(arg)
 	local cmd, name = U.Trim(arg):match("^(%S*)%s*(.-)$")
@@ -539,7 +579,7 @@ ns.Command("relay", function(arg)
 	local list = Relay.Candidates()
 	if #list == 0 then ns.Print(L.RELAY_NONE) end
 	for _, e in ipairs(list) do
-		ns.Print("  %s — %s (%s)", U.Display(e.name), StateOf(e, now), Relay.TrustOf(e.name) or "?")
+		ns.Print("  %s — %s (%s)", U.Display(e.name), (StateOf(e, now)), Relay.TrustOf(e.name) or "?")
 	end
 	if Relay.IAmRelay() then
 		local n = 0

@@ -198,12 +198,19 @@ end)
 -- Гильдия игрока
 ---------------------------------------------------------------------------
 
--- Название моей гильдии и мой rankIndex (0 — глава), или nil.
+-- Название моей гильдии, мой rankIndex (0 — глава) и название звания, или nil.
 function ns.MyGuild()
 	if not (IsInGuild and IsInGuild()) then return nil end
-	local guild, _, rankIndex = GetGuildInfo("player")
+	local guild, rankName, rankIndex = GetGuildInfo("player")
 	if not guild or guild == "" then return nil end
-	return guild, rankIndex
+	return guild, rankIndex, rankName
+end
+
+-- Моя роль в связи (U.TrustRole): "leader", "officer", "rank", "member" или nil.
+function ns.MyTrust()
+	local g, rank, rankName = ns.MyGuild()
+	if not g or not U.IsMemberGuild(g) then return nil end
+	return U.TrustRole(rank, rankName, ns.Roster.IsOfficerRank(rank))
 end
 
 -- Я в «своей» гильдии.
@@ -212,13 +219,9 @@ function ns.IsMember()
 	return g ~= nil and U.IsMemberGuild(g)
 end
 
-function ns.IsOfficer()
-	local g, rank = ns.MyGuild()
-	return g ~= nil and U.IsMemberGuild(g) and rank ~= nil and rank <= C.OFFICER_RANK
-end
-
 ---------------------------------------------------------------------------
--- Команды: /cz <команда> [аргументы]
+-- Команды: /cz <команда> [аргументы]. /чз — то же на кириллице (как в ChillZoneUnion).
+-- Текст, который не начинается с команды, уходит в общий чат, как /cz1.
 ---------------------------------------------------------------------------
 local commands, order = {}, {}
 function ns.Command(name, fn, help)
@@ -239,6 +242,8 @@ ns.Command("help", function()
 		if c.help then DEFAULT_CHAT_FRAME:AddMessage("  " .. ns.COLOR .. "/cz " .. name .. "|r — " .. c.help) end
 	end
 	DEFAULT_CHAT_FRAME:AddMessage("  " .. ns.COLOR .. "/cz1 /cz2 /cz3|r — " .. L.HELP_CHAT)
+	DEFAULT_CHAT_FRAME:AddMessage("  " .. ns.COLOR .. "/cz текст|r — " .. L.HELP_CHAT_TEXT)
+	DEFAULT_CHAT_FRAME:AddMessage("  " .. ns.COLOR .. "/чз /чз1 /чз2 /чз3|r — " .. L.HELP_RU)
 end, L.HELP_HELP)
 
 ns.Command("status", function()
@@ -271,6 +276,8 @@ end, L.HELP_LOG)
 
 SLASH_CHILLZONE1 = "/cz"
 SLASH_CHILLZONE2 = "/chillzone"
+SLASH_CHILLZONE3 = "/чз"
+SLASH_CHILLZONE4 = "/чиллзон"
 SlashCmdList.CHILLZONE = function(msg)
 	if not ns.me then return end
 	local name, rest = U.Trim(msg):match("^(%S*)%s*(.-)$")
@@ -281,7 +288,7 @@ SlashCmdList.CHILLZONE = function(msg)
 	end
 	local c = commands[name]
 	if not c then
-		ns.Print(L.UNKNOWN_COMMAND, name)
+		ns.SafeCall("/cz текст", ns.Chat.Send, "A", U.Trim(msg))
 		return
 	end
 	ns.SafeCall("/cz " .. name, c.fn, rest)

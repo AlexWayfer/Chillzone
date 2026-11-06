@@ -101,6 +101,27 @@ function U.IsMainGuild(guild)
 	return type(guild) == "string" and guild ~= "" and U.Fold(guild) == U.Fold(ns.Config.MAIN_GUILD)
 end
 
+-- Звание связного (Config.RELAY_RANK): название целиком, без учёта регистра и пробелов по краям.
+function U.IsRelayRankName(rankName)
+	local want = U.Trim(ns.Config.RELAY_RANK)
+	if want == "" or type(rankName) ~= "string" then return false end
+	return U.Fold(U.Trim(rankName)) == U.Fold(want)
+end
+
+-- Кому гильдия доверяет связь: "leader", "officer", "rank" (связной), "member" (любой
+-- участник, пока Config.TRUST_ANY_MEMBER) или nil (рядовой). Только они бывают репортёрами,
+-- в главной гильдии — реле, и только от них по GUILD принимаются пересланные чужие сообщения.
+-- officer — офицерское ли звание (Roster.IsOfficerRank); nil — по Config.OFFICER_RANK.
+function U.TrustRole(rank, rankName, officer)
+	if type(rank) ~= "number" then return nil end
+	if rank == 0 then return "leader" end
+	if officer == nil then officer = rank <= ns.Config.OFFICER_RANK end
+	if officer then return "officer" end
+	if U.IsRelayRankName(rankName) then return "rank" end
+	if ns.Config.TRUST_ANY_MEMBER then return "member" end
+	return nil
+end
+
 -- Ключ гильдии для таблиц (регистр не важен).
 function U.GuildKey(guild)
 	return U.Fold(guild)

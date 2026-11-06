@@ -1,7 +1,7 @@
 -- Chillzone: окно — как «Гильдия и сообщества»: рамка ButtonFrameTemplate с портретом, вкладки-
--- значки на правом краю (Чат, Перепись, Королевство, Настройки). Чат рисует ChatPane.lua,
--- остальные вкладки — список строк из Views.lua во вставке окна. Кнопка у миникарты — по образцу
--- Olympus UI.lua.
+-- значки на правом краю (Чат, Перепись, Королевство, Настройки, а главам и офицерам ещё Отладка).
+-- Чат рисует ChatPane.lua, Перепись — CensusPane.lua, остальные вкладки — список строк из Views.lua
+-- и Debug.lua во вставке окна. Кнопка у миникарты — по образцу Olympus UI.lua.
 local ADDON, ns = ...
 
 local L = ns.L
@@ -17,7 +17,9 @@ local TABS = {
 	{ key = "census", text = "TAB_CENSUS", icons = { "Interface\\Icons\\achievement_guildperk_everybodysfriend", "Interface\\Icons\\INV_Misc_Book_09" } },
 	{ key = "kingdom", text = "TAB_KINGDOM", icons = { "Interface\\Icons\\achievement_guildperk_honorablemention", "Interface\\Icons\\INV_Misc_Note_01" } },
 	{ key = "settings", text = "TAB_SETTINGS", icons = { "Interface\\Icons\\INV_Misc_Gear_01" } },
+	{ key = "debug", text = "TAB_DEBUG", icons = { "Interface\\Icons\\Trade_Engineering", "Interface\\Icons\\INV_Misc_Spyglass_03" } },
 }
+local DEBUG_EVERY = 5 -- «Отладка» обновляется чаще остальных: там счётчики и состояние реле
 local frame, body, scroll, child, settings = nil, nil, nil, nil, nil
 local status, heading -- шапка (крупно и мелко) и название вкладки слева вверху
 local tabs, rows, checks = {}, {}, {}
@@ -50,7 +52,7 @@ local function FirstIcon(paths)
 end
 
 ---------------------------------------------------------------------------
--- Строки «Переписи» и «Королевства»
+-- Строки «Королевства» и «Отладки»
 ---------------------------------------------------------------------------
 local function Row(i)
 	local r = rows[i]
@@ -158,8 +160,17 @@ function UI.RenderStatus()
 	if w > 0 then status:SetWidth(math.ceil(w) + 4) end
 end
 
+-- Вкладка «Отладка» — только тем, кому можно (Debug.Allowed): звание могли поменять при открытом окне.
+local function SyncDebugTab()
+	local allowed = ns.Debug.Allowed()
+	if tabs.debug then tabs.debug:SetShown(allowed) end
+	if current == "debug" and not allowed then current = "chat" end
+	return allowed
+end
+
 function UI.Render()
 	if not frame or not frame:IsShown() then return end
+	SyncDebugTab()
 	for key, tab in pairs(tabs) do tab:SetChecked(key == current) end
 	UI.RenderStatus()
 	local def
@@ -189,7 +200,11 @@ function UI.Render()
 	end
 	ns.CensusPane.Hide()
 	scroll:Show()
-	RenderRows(ns.Views.Kingdom())
+	if current == "debug" then
+		ns.SafeCall("debug tab", function() RenderRows(ns.Debug.Lines()) end)
+	else
+		RenderRows(ns.Views.Kingdom())
+	end
 end
 
 local function SelectTab(key)
@@ -321,14 +336,18 @@ local function Create()
 
 	ns.ChatPane.Build(f)
 	for i, def in ipairs(TABS) do SideTab(i, def) end
+	UI.tabs = tabs
 
 	f:SetScript("OnShow", function() UI.Render() end)
 	f:SetScript("OnHide", function() ns.ChatPane.Hide() end)
-	local elapsed = 0
+	local elapsed, debugElapsed = 0, 0
 	f:SetScript("OnUpdate", function(_, dt)
-		elapsed = elapsed + (dt or 0)
-		if elapsed >= 30 then
-			elapsed = 0
+		elapsed, debugElapsed = elapsed + (dt or 0), debugElapsed + (dt or 0)
+		if current == "debug" and debugElapsed >= DEBUG_EVERY then
+			elapsed, debugElapsed = 0, 0
+			UI.Render()
+		elseif elapsed >= 30 then
+			elapsed, debugElapsed = 0, 0
 			if current == "census" or current == "kingdom" then UI.Render() else UI.RenderStatus() end
 		end
 	end)
@@ -362,7 +381,12 @@ end
 
 local function Refresh()
 	if not frame or not frame:IsShown() then return end
-	if current == "census" or current == "kingdom" then UI.Render() else UI.RenderStatus() end
+	local debugShown = (tabs.debug and tabs.debug:IsShown()) and true or false
+	if current == "census" or current == "kingdom" or current == "debug" or debugShown ~= ns.Debug.Allowed() then
+		UI.Render()
+	else
+		UI.RenderStatus()
+	end
 end
 ns.On("DATA", Refresh)
 ns.On("ROSTER", Refresh)
@@ -446,3 +470,10 @@ end, L.HELP_MINIMAP)
 ns.Command("kingdom", function() UI.Toggle("kingdom") end, L.HELP_KINGDOM)
 ns.Command("census", function() UI.Toggle("census") end, L.HELP_CENSUS)
 ns.Command("settings", function() UI.Toggle("settings") end, L.HELP_SETTINGS)
+ns.Command("diag", function()
+	if not ns.Debug.Allowed() then
+		ns.Print(L.DIAG_ONLY_OFFICERS)
+		return
+	end
+	UI.Toggle("debug")
+end, L.HELP_DIAG)

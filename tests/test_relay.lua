@@ -3,13 +3,14 @@ local T = ...
 local Wow = assert(loadfile(T.ROOT .. "/tests/wow.lua"))(T)
 
 local RELAY = { "Арагорн Светлый" }
+-- Доверие по званию (как до TRUST_ANY_MEMBER): только глава, офицеры и «Ветеран».
+local RANKS = { TRUST_ANY_MEMBER = false }
 local LINK = "|cffa335ee|Hitem:19019::::::::60:::::|h[Громосвёрт, Благословенный клинок Искателя Ветра]|h|r"
 
 local function Build(opts)
 	opts = opts or {}
 	math.randomseed(opts.seed or tonumber(os.getenv("CZ_SEED") or "") or 7)
 	local w = Wow.World()
-	w.channelDisabled = opts.noChannel or false
 	w:Guild("Чиллзон")
 	w:Guild("Чиллзон Север")
 	w:Guild("Орден Чиллзона")
@@ -18,13 +19,14 @@ local function Build(opts)
 	for i = 1, (opts.officers or 0) do
 		w:AddOffline("Орден Чиллзона", ("Офицерскийперсонаж%02d Длиннофамильный-CAMWOWUS2Realm3PvE"):format(i), 1, 60, "PRIEST", i)
 	end
+	local cfg = opts.config
 	local c = {}
-	c.A = w:Client({ first = "Арагорн", surname = "Светлый", guild = "Чиллзон", rank = 1, zone = "Штормград" })
-	c.K = w:Client({ first = "Карл", surname = "Великий", guild = "Чиллзон", rank = 0, realm = "CAMWOWUS2Realm3PvE", class = "PALADIN" })
-	c.M = w:Client({ first = "Мира", surname = "Тихая", guild = "Чиллзон", rank = 3, class = "PRIEST" })
-	c.B = w:Client({ first = "Борис", surname = "Быстрый", guild = "Чиллзон Север", rank = 2, relays = RELAY, class = "WARRIOR", zone = "Тернистая долина" })
-	c.V = w:Client({ first = "Вера", surname = "Верная", guild = "Чиллзон Север", rank = 0, relays = RELAY, realm = "CAMWOWUS2Realm5PvE", class = "DRUID" })
-	c.G = w:Client({ first = "Глеб", surname = "Гордый", guild = "Орден Чиллзона", rank = 0, relays = RELAY, class = "HUNTER" })
+	c.A = w:Client({ first = "Арагорн", surname = "Светлый", guild = "Чиллзон", rank = 1, zone = "Штормград", config = cfg })
+	c.K = w:Client({ first = "Карл", surname = "Великий", guild = "Чиллзон", rank = 0, realm = "CAMWOWUS2Realm3PvE", class = "PALADIN", config = cfg })
+	c.M = w:Client({ first = "Мира", surname = "Тихая", guild = "Чиллзон", rank = 3, class = "PRIEST", config = cfg })
+	c.B = w:Client({ first = "Борис", surname = "Быстрый", guild = "Чиллзон Север", rank = 2, relays = RELAY, class = "WARRIOR", zone = "Тернистая долина", config = cfg })
+	c.V = w:Client({ first = "Вера", surname = "Верная", guild = "Чиллзон Север", rank = 0, relays = RELAY, realm = "CAMWOWUS2Realm5PvE", class = "DRUID", config = cfg })
+	c.G = w:Client({ first = "Глеб", surname = "Гордый", guild = "Орден Чиллзона", rank = 0, relays = RELAY, class = "HUNTER", config = cfg })
 	w:Run(opts.run or 400)
 	return w, c
 end
@@ -83,31 +85,48 @@ T.test("relay: перепись сходится у всех", function()
 end)
 
 T.test("relay: реле выучено из ответа доверенного реле", function()
-	local _, c = Build()
+	local _, c = Build({ config = RANKS })
 	local learned = c.B.ns.store.relays[Key(c.B, "Карл Великий")]
 	T.ok(learned, "Карл выучен")
 	T.eq(c.B.ns.Relay.TrustOf("Карл Великий"), "gossip", "доверие")
 	T.eq(c.B.ns.Relay.TrustOf("Мира Тихая"), nil, "не офицер — не реле")
 end)
 
-T.test("relay: строка чата доходит один раз до всех (канал + GUILD + реле)", function()
+T.test("relay: без проверки звания любой участник — репортёр, реле и пересылает RG", function()
+	local w, c = Build()
+	T.ok(c.M.ns.Relay.IAmRelay(), "«Рядовой» главной — реле")
+	T.eq(c.A.ns.Relay.TrustOf("Мира Тихая"), "member", "согильдийцы — по ростеру")
+	T.eq(c.B.ns.Relay.TrustOf("Мира Тихая"), "gossip", "Север выучил Миру из ответа реле")
+	-- Рядовой Севера с зонами — единственный, кто делится зонами, поэтому репортёр он.
+	local Ak = w:Client({ first = "Аким", surname = "Альфа", guild = "Чиллзон Север", rank = 3, relays = RELAY })
+	Ak:Slash("/cz", "zones on")
+	w:Run(200)
+	for _, cl in ipairs({ c.B, c.V, Ak }) do
+		T.eq(cl.ns.Census.Reporter(), Key(cl, "Аким Альфа"), cl:Name() .. ": репортёр — Аким")
+	end
+	T.ok(Ak.ns.Census.IsReporter(), "Аким репортёр")
+	T.eq(Ak.ns.Roster.TrustOf("Аким Альфа"), "member", "роль — участник")
+	-- Строка Глеба доходит до Севера через Акима (RM от реле, затем RG гильдии).
+	c.G:Slash("/cz1", "привет Северу через рядового")
+	w:Run(30)
+	for _, cl in ipairs({ c.B, c.V, Ak }) do T.eq(cl:Saw("привет Северу через рядового"), 1, cl:Name() .. " видит") end
+	T.eq(c.B.ns.Relay.stats.untrusted, 0, "RG от рядового принят")
+	Ak:Slash("/cz", "status")
+	T.ok(Ak:Saw("может быть любой участник") >= 1, "status объясняет режим")
+end)
+
+T.test("relay: строка чата доходит один раз до всех (GUILD + реле), ссылка цела", function()
 	local w, c = Build()
 	local text = "всем привет " .. LINK
 	c.B:Slash("/cz1", text)
 	w:Run(30)
 	for name, cl in pairs(c) do T.eq(cl:Saw(text), 1, name .. " видит один раз") end
-end)
-
-T.test("relay: без канала чат идёт через реле, ссылка цела", function()
-	local w, c = Build({ noChannel = true })
-	local text = "только через реле " .. LINK
-	c.B:Slash("/cz1", text)
-	w:Run(30)
-	for name, cl in pairs(c) do T.eq(cl:Saw(text), 1, name .. " видит один раз") end
+	for _, e in ipairs(w.log) do T.no(e.dist == "CHANNEL", "в канал ничего не уходит") end
+	for name, cl in pairs(c) do T.eq(next(cl.joined), nil, name .. ": ни в каком канале") end
 end)
 
 T.test("relay: реле пишет само — без шёпота RL", function()
-	local w, c = Build({ noChannel = true })
+	local w, c = Build()
 	local text = "слово реле"
 	c.A:Slash("/cz1", text)
 	w:Run(30)
@@ -118,7 +137,7 @@ T.test("relay: реле пишет само — без шёпота RL", functio
 end)
 
 T.test("relay: уровни чата — офицеры и главы", function()
-	local w, c = Build({ noChannel = true })
+	local w, c = Build()
 	c.B:Slash("/cz2", "можно мне?")
 	T.ok(c.B:Saw("можно писать только") >= 1, "Борису отказано")
 	w:Run(5)
@@ -133,19 +152,188 @@ T.test("relay: уровни чата — офицеры и главы", function
 	T.eq(c.B:Saw("главам слово"), 0, "Борис не видит")
 end)
 
-T.test("relay: подделка в канале отклоняется", function()
-	local w, c = Build()
-	local B = c.B
-	-- Чужак пишет в канал от имени Севера и уровнем глав.
-	local fake = w:Client({ first = "Чужак", surname = "Хитрый", guild = nil, rank = 3 })
-	fake.joined["ChillzoneA"], fake.joinedById[9] = 9, "ChillzoneA"
-	local msg1 = B.ns.Codec.EncodeChat("A", "Чиллзон Север", 77, "MAGE", "я из Севера")
-	local msg2 = B.ns.Codec.EncodeChat("L", "Орден Чиллзона", 78, "MAGE", "я глава Ордена")
-	w:Say(fake, msg1, 9)
-	w:Say(fake, msg2, 9)
+T.test("relay: RG от рядового отклоняется — и чат, и отчёт", function()
+	local w, c = Build({ config = RANKS })
+	local M = c.M -- «Рядовой» главной гильдии
+	local Codec = M.ns.Codec
+	-- То, что рядовой мог бы отправить одной /run: строку «от главы Севера» и строку
+	-- «от Глеба» (уровень всех), обе как будто их переслал репортёр.
+	local fake1 = Codec.EncodeRM("RG", "P", "Вера Верная", Codec.EncodeChat("L", "Чиллзон Север", 4242, "DRUID", "поддельный приказ главы"))
+	local fake2 = Codec.EncodeRM("RG", "P", "Глеб Гордый", Codec.EncodeChat("A", "Орден Чиллзона", 4243, "HUNTER", "поддельный привет"))
+	w:Deliver(M, "GUILD", "CHILLZONE", fake1, nil, true)
+	w:Deliver(M, "GUILD", "CHILLZONE", fake2, nil, true)
+	-- И отчёт Севера, где глава — Мира.
+	local real = c.K.ns.Data.Row("Чиллзон Север")
+	T.ok(real and real.r.leader == "Вера Верная", "настоящий отчёт Севера известен")
+	local r = Codec.DecodeReport(real.raw)
+	r.leader, r.st = "Мира Тихая", M.ns.ServerTime() + 200
+	w:Deliver(M, "GUILD", "CHILLZONE", Codec.EncodeRM("RG", "L", "Вера Верная", Codec.EncodeReport(r)), nil, false)
 	w:Run(5)
-	T.eq(B:Saw("я из Севера"), 0, "назвался моей гильдией, но не в ростере")
-	T.eq(c.A:Saw("я глава Ордена"), 0, "уровень глав без подтверждения")
+	for _, n in ipairs({ "K", "A" }) do
+		T.eq(c[n]:Saw("поддельный приказ главы"), 0, n .. " не видит поддельную строку глав")
+		T.eq(c[n]:Saw("поддельный привет"), 0, n .. " не видит поддельную строку всех")
+		T.eq(c[n].ns.Data.Row("Чиллзон Север").r.leader, "Вера Верная", n .. ": глава Севера прежний")
+		T.ok(c[n].ns.Relay.stats.untrusted >= 3, n .. ": RG посчитаны как недоверенные")
+	end
+end)
+
+T.test("relay: рядовой не становится репортёром — ни с первым именем, ни с зонами", function()
+	local w, c = Build({ config = RANKS })
+	local Ak = w:Client({ first = "Аким", surname = "Альфа", guild = "Чиллзон Север", rank = 3, relays = RELAY, config = RANKS })
+	Ak:Slash("/cz", "zones on")
+	w:Run(200)
+	for _, cl in ipairs({ c.B, c.V, Ak }) do
+		T.eq(cl.ns.Census.Reporter(), Key(cl, "Борис Быстрый"), cl:Name() .. ": репортёр — связной Борис")
+	end
+	T.eq(c.B.ns.Roster.TrustOf("Борис Быстрый"), "rank", "Борис — «Ветеран»")
+	T.eq(c.B.ns.Roster.TrustOf("Аким Альфа"), nil, "Аким — рядовой")
+	-- Ушли Борис и Вера — в Севере некому быть репортёром.
+	c.B:Logout()
+	c.V:Logout()
+	w:Run(200)
+	T.eq(Ak.ns.Census.Reporter(), nil, "репортёра нет")
+	Ak:Slash("/cz", "status")
+	T.ok(Ak:Saw("нет главы, офицера или «Ветеран»") >= 1, "status объясняет")
+end)
+
+T.test("relay: связной главной гильдии — реле, другие гильдии его узнают", function()
+	local w, c = Build({ config = RANKS })
+	local Vt = w:Client({ first = "Вадим", surname = "Ветров", guild = "Чиллзон", rank = 2, class = "ROGUE", config = RANKS })
+	T.ok(Vt.ns.Relay.IAmRelay(), "«Ветеран» главной — реле")
+	T.no(c.M.ns.Relay.IAmRelay(), "«Рядовой» главной — нет")
+	w:Run(700)
+	local row = c.B.ns.Data.Row("Чиллзон")
+	local listed = false
+	for _, v in ipairs(row.r.veterans or {}) do if v.name == "Вадим Ветров" then listed = true end end
+	T.ok(listed, "связной — в отчёте главной")
+	T.eq(c.B.ns.Relay.TrustOf("Вадим Ветров"), "gossip", "Север доверяет выученному связному")
+	T.eq(c.K.ns.Relay.TrustOf("Вадим Ветров"), "rank", "глава главной — по ростеру")
+	-- Без звания связных в настройках «Ветеран» — обычный участник.
+	Vt.ns.Config.RELAY_RANK = ""
+	T.no(Vt.ns.Relay.IAmRelay(), "RELAY_RANK пустой — не реле")
+end)
+
+T.test("relay: офицер — по игровому флагу звания, а не по номеру ранга", function()
+	local w, c = Build()
+	-- В главной гильдии звание 1 без офицерских прав, в Севере офицеры — звание 2 («Ветеран»).
+	w.guilds["Чиллзон"].officers = { [0] = true }
+	w.guilds["Чиллзон Север"].officers = { [0] = true, [2] = true }
+	for _, cl in pairs(c) do cl:Fire("GUILD_RANKS_UPDATE") end
+	w:Run(400)
+	T.eq(c.B.ns.Chat.MyLevel(), 2, "Борис (звание 2 с флагом) — офицер")
+	T.eq(c.A.ns.Chat.MyLevel(), 1, "Арагорн (звание 1 без флага) — участник")
+	T.ok(c.B.ns.GuildChat.CanOfficer(), "Борису доступен офицерский чат гильдии")
+	T.no(c.A.ns.GuildChat.CanOfficer(), "Арагорну — нет")
+	T.eq(c.G.ns.Data.KnownRank("Чиллзон Север", "Борис Быстрый"), 2, "Глеб знает Бориса как офицера из отчёта")
+	T.eq(c.G.ns.Data.KnownRank("Чиллзон", "Арагорн Светлый"), nil, "Арагорна в офицерах главной нет")
+	c.B:Slash("/cz2", "офицер по флагу")
+	w:Run(30)
+	for _, n in ipairs({ "K", "V", "G" }) do T.eq(c[n]:Saw("офицер по флагу"), 1, n .. " видит") end
+	T.eq(c.A:Saw("офицер по флагу"), 0, "Арагорн без флага не видит")
+	T.eq(c.M:Saw("офицер по флагу"), 0, "рядовой не видит")
+	c.A:Slash("/cz2", "можно мне?")
+	T.ok(c.A:Saw("можно писать только") >= 1, "Арагорну отказано")
+end)
+
+T.test("relay: игра не отдала права званий — офицеры по OFFICER_RANK", function()
+	local w = Wow.World()
+	w:Guild("Чиллзон")
+	local X = w:Client({ first = "Ксения", surname = "Иксова", guild = "Чиллзон", rank = 2 })
+	local R = X.ns.Roster
+	local answers = {
+		{ "пустая таблица", function() return {} end },
+		{ "ошибка", function() error("нельзя") end },
+		{ "не таблица", function() return nil end },
+	}
+	for _, a in ipairs(answers) do
+		X.env.C_GuildInfo.GuildControlGetRankFlags = a[2]
+		X:Fire("GUILD_RANKS_UPDATE")
+		T.eq(R.RankFlagOfficer(1), nil, a[1] .. ": флаг неизвестен")
+		T.ok(R.IsOfficerRank(1), a[1] .. ": звание 1 — офицер")
+		T.no(R.IsOfficerRank(2), a[1] .. ": звание 2 — нет")
+	end
+	X.env.C_GuildInfo.GuildControlGetRankFlags = nil
+	X:Fire("GUILD_RANKS_UPDATE")
+	T.ok(R.IsOfficerRank(1) and not R.IsOfficerRank(3), "нет API — по номеру")
+	T.ok(R.IsOfficerRank(0), "глава — всегда")
+	T.eq(#X.ns.db.errors, 0, "без ошибок")
+end)
+
+-- Часы клиента cl на время t; все известные ему реле отвечают.
+local function AtWindow(cl, t)
+	cl.ns.Now = function() return t end
+	for _, e in pairs(cl.ns.Relay.Known()) do e.verified, e.asked, e.down = t, nil, nil end
+end
+
+T.test("relay: из отвечающих реле первыми выбираются глава и офицеры главной", function()
+	local _, c = Build()
+	local B, A = c.B, c.A
+	local clockB, clockA = B.ns.Now, A.ns.Now
+	local base = clockB()
+	local known = B.ns.Relay.Known()
+	for _, k in ipairs({ "арагорн светлый", "карл великий", "мира тихая" }) do
+		T.ok(known[k], "Борис знает реле " .. k)
+	end
+	local gk = B.ns.Util.GuildKey("Чиллзон Север")
+	local picked, plain = {}, {}
+	for i = 1, 60 do
+		local t = base + i * 600
+		AtWindow(B, t)
+		picked[B.ns.Relay.Pick().key] = true
+		plain[B.ns.Codec.PickRelay(gk, { "арагорн светлый", "карл великий", "мира тихая" }, t, 600)] = true
+	end
+	T.ok(plain["мира тихая"], "без приоритета Мира иногда была бы выбрана")
+	T.no(picked["мира тихая"], "рядовая Мира не выбирается, пока офицеры отвечают")
+	T.ok(picked["арагорн светлый"] and picked["карл великий"], "глава и офицер чередуются")
+	T.ok(B.ns.Relay.IsMainOfficer("Карл Великий") and not B.ns.Relay.IsMainOfficer("Мира Тихая"), "по отчёту главной")
+
+	-- Глава и офицер не в игре: сообщения идут через участника.
+	local t = base + 61 * 600
+	AtWindow(B, t)
+	known["арагорн светлый"].down = t + 100
+	known["карл великий"].down = t + 100
+	T.eq(B.ns.Relay.Pick().key, "мира тихая", "офицеры не в игре — Мира")
+
+	-- Руководство главной в отчётах расходится: офицерам из отчёта не верим, приоритета нет.
+	B.ns.Data.Row("Чиллзон").conflict = true
+	picked = {}
+	for i = 62, 121 do
+		AtWindow(B, base + i * 600)
+		picked[B.ns.Relay.Pick().key] = true
+	end
+	T.ok(picked["мира тихая"], "при расхождении Мира снова в общем ряду")
+	B.ns.Data.Row("Чиллзон").conflict = nil
+
+	-- В главной гильдии — по своему ростеру: у Арагорна из Карла и Миры всегда Карл.
+	T.ok(A.ns.Relay.Known()["мира тихая"], "Арагорн знает Миру")
+	picked, plain = {}, {}
+	local agk = A.ns.Util.GuildKey("Чиллзон")
+	for i = 1, 60 do
+		local at = base + i * 600
+		AtWindow(A, at)
+		picked[A.ns.Relay.Pick().key] = true
+		plain[A.ns.Codec.PickRelay(agk, { "карл великий", "мира тихая" }, at, 600)] = true
+	end
+	T.ok(plain["мира тихая"], "без приоритета Арагорн иногда выбрал бы Миру")
+	T.no(picked["мира тихая"], "Арагорн выбирает Карла")
+	B.ns.Now, A.ns.Now = clockB, clockA
+	for name, cl in pairs(c) do T.eq(#cl.ns.db.errors, 0, name .. ": без ошибок") end
+end)
+
+T.test("relay: из старых скрытых каналов аддон выходит, их строки спрятаны", function()
+	local w, c = Build()
+	local N = w:Client({ first = "Нина", surname = "Новая", guild = "Чиллзон Север", rank = 3, relays = RELAY })
+	N.joined["ChillzoneA"], N.joinedById[7] = 7, "ChillzoneA"
+	w:Run(10)
+	T.eq(N.joined["ChillzoneA"], nil, "вышла из ChillzoneA")
+	local hidden, shown = false, false
+	for _, fn in ipairs(N.filters["CHAT_MSG_CHANNEL"] or {}) do
+		if fn(nil, "CHAT_MSG_CHANNEL", "M1~A~x", "Кто-то", "", "7. ChillzoneA", "", "", 0, 7, "ChillzoneA") then hidden = true end
+		if fn(nil, "CHAT_MSG_CHANNEL", "привет", "Кто-то", "", "2. Торговля", "", "", 0, 2, "Торговля") then shown = true end
+	end
+	T.ok(hidden, "строка старого канала спрятана")
+	T.no(shown, "чужие каналы не трогаем")
+	T.eq(#N.ns.db.errors, 0, "без ошибок")
 end)
 
 T.test("relay: длинный отчёт (несколько кусков) доходит целым", function()
@@ -165,18 +353,25 @@ T.test("relay: длинный отчёт (несколько кусков) до�
 end)
 
 T.test("relay: реле вышло из игры — сообщение уходит через другое", function()
-	local w, c = Build({ noChannel = true })
+	local w, c = Build()
 	local pick = c.B.ns.Relay.Pick()
 	T.ok(pick, "у Бориса есть реле")
-	local gone = (pick.name == "Арагорн Светлый") and c.A or c.K
-	local other = (gone == c.A) and c.K or c.A
+	local function Client(key)
+		for _, cl in pairs(c) do
+			if Key(c.B, cl:Name()) == key then return cl end
+		end
+	end
+	local gone = Client(pick.key)
+	T.ok(gone, "реле Бориса — один из клиентов")
 	gone:Logout()
 	local text = "реле ушло, а я пишу"
 	c.B:Slash("/cz1", text)
 	w:Run(60)
 	T.ok(c.B.ns.Relay.Known()[pick.key].down, "ушедшее реле помечено")
+	local now = c.B.ns.Relay.Pick()
+	T.ok(now and now.key ~= pick.key, "Борис перешёл на другое реле")
 	T.eq(c.G:Saw(text), 1, "Глеб видит")
-	T.eq(other:Saw(text), 1, "второе реле видит")
+	T.eq(Client(now.key):Saw(text), 1, "второе реле видит")
 	local hidden = false
 	for _, fn in ipairs(c.B.filters["CHAT_MSG_SYSTEM"] or {}) do
 		if fn(nil, "CHAT_MSG_SYSTEM", ("No player named '%s' is currently playing."):format(pick.name)) then hidden = true end
@@ -193,6 +388,40 @@ T.test("relay: Q1 после /reload восполняет перепись", fun
 	w:Run(40)
 	T.ok(M2.ns.Data.Row("Орден Чиллзона"), "Орден пришёл по Q1")
 	T.ok(M2.ns.Data.Row("Чиллзон Север"), "Север пришёл по Q1")
+end)
+
+T.test("relay: /чз — как /cz: команды, окно, текст в общий чат", function()
+	local w, c = Build()
+	local toggles, toggle = 0, c.B.ns.UI.Toggle
+	c.B.ns.UI.Toggle = function() toggles = toggles + 1 end
+	for _, cmd in ipairs({ "/cz", "/чз", "/чиллзон", "/chillzone" }) do
+		c.B:Slash(cmd, "")
+		c.B:Slash(cmd, "status")
+	end
+	c.B.ns.UI.Toggle = toggle
+	T.eq(toggles, 4, "без текста — окно")
+	T.eq(c.B.ns.Chat.stats.sent, 0, "команды не ушли в чат")
+	T.ok(c.B:Saw("перепись: репортёр") >= 4, "status выполнен")
+	local lines = {
+		{ c.B, "/чз", "Привет кириллицей" },
+		{ c.B, "/cz", "привет без номера" },
+		{ c.B, "/чз1", "привет через чз1" },
+		{ c.V, "/чз2", "офицерам через чз2" },
+		{ c.G, "/чз3", "главам через чз3" },
+	}
+	for _, l in ipairs(lines) do
+		l[1]:Slash(l[2], l[3])
+		w:Run(10)
+	end
+	for name, cl in pairs(c) do
+		T.eq(cl:Saw("Привет кириллицей"), 1, name .. ": /чз текст")
+		T.eq(cl:Saw("привет без номера"), 1, name .. ": /cz текст")
+		T.eq(cl:Saw("привет через чз1"), 1, name .. ": /чз1")
+	end
+	for _, n in ipairs({ "A", "K", "G", "V" }) do T.eq(c[n]:Saw("офицерам через чз2"), 1, n .. ": /чз2") end
+	T.eq(c.M:Saw("офицерам через чз2"), 0, "рядовой не видит /чз2")
+	for _, n in ipairs({ "A", "K", "V", "G" }) do T.eq(c[n]:Saw("главам через чз3"), 1, n .. ": /чз3") end
+	for name, cl in pairs(c) do T.eq(#cl.ns.db.errors, 0, name .. ": без ошибок") end
 end)
 
 T.test("relay: команды, окно и вкладки без ошибок", function()

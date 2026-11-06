@@ -262,6 +262,73 @@ T.test("окно: вкладки, каналы, ссылки и шёпот бе�
 	Errors(c)
 end)
 
+-- Строки «Отладки» одним текстом, без цветов и значков.
+local function DebugText(cl)
+	local out = {}
+	for _, l in ipairs(cl.ns.Debug.Lines()) do
+		local s = (l.text or "") .. " | " .. (l.right or "")
+		out[#out + 1] = (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T[^|]*|t", ""))
+	end
+	return table.concat(out, "\n")
+end
+
+T.test("окно: вкладка «Отладка» — главам и офицерам", function()
+	local w, c = Build()
+	local A, M, B, V = c.A, c.M, c.B, c.V
+	A.ns.UI.Toggle("debug")
+	T.eq(A.ns.UI.Current(), "debug", "офицер главной видит «Отладку»")
+	T.ok(A.ns.UI.tabs.debug:IsShown(), "значок вкладки виден")
+	M.ns.UI.Toggle("debug")
+	T.eq(M.ns.UI.Current(), "chat", "рядовому вместо «Отладки» — чат")
+	T.no(M.ns.UI.tabs.debug:IsShown(), "значка у рядового нет")
+	M:Slash("/cz", "diag")
+	T.ok(M:Saw("только для глав и офицеров") >= 1, "команда рядовому отказывает")
+	T.eq(M.ns.UI.Current(), "chat", "окно осталось на чате")
+	B:Slash("/чз", "diag")
+	T.ok(B:Saw("только для глав и офицеров") >= 1, "«Ветеран» Севера без флага — тоже нет")
+	V:Slash("/чз", "diag")
+	T.eq(V.ns.UI.Current(), "debug", "глава Севера видит «Отладку»")
+
+	-- Что видно: реле, через кого шлю, регистрации у реле, отчёты.
+	local a, b = DebugText(A), DebugText(B)
+	T.ok(a:find("моё реле: я сам", 1, true), "реле рассылает само")
+	T.ok(a:find("Орден Чиллзона: Глеб Гордый", 1, true), "Глеб зарегистрирован у Арагорна")
+	T.ok(a:find("Чиллзон Север: ", 1, true), "репортёр Севера тоже")
+	T.ok(a:find("офицер: да  (по флагу «Офицер» у звания)", 1, true), "откуда известно, что офицер")
+	local via = B.ns.Relay.Pick()
+	T.ok(via and (via.key == "арагорн светлый" or via.key == "карл великий"), "Борис шлёт через офицера главной")
+	T.ok(b:find("моё реле: " .. B.ns.Util.Display(via.name), 1, true), "через кого шлю")
+	T.ok(b:find("в приоритете  из Config (RELAYS) | отвечает", 1, true), "Арагорн из Config, офицер, отвечает")
+	T.ok(b:find("Мира Тихая  узнал от другого реле", 1, true), "Мира не в приоритете")
+	T.ok(b:find("Орден Чиллзона | от Глеб Гордый", 1, true), "откуда отчёт Ордена")
+	-- Реле не в игре, отклонённые отчёты и ошибки.
+	local e = B.ns.Relay.Known()["арагорн светлый"]
+	e.down = B.ns.Now() + 120
+	B.ns.Data.rejected["старее"] = 2
+	B.ns.db.errors[1] = "проверка: |cffff0000сломалось"
+	b = DebugText(B)
+	T.ok(b:find("Арагорн Светлый  в приоритете  из Config (RELAYS) | не в игре, ещё 2 мин", 1, true), "реле не в игре")
+	T.ok(b:find("отклонено: старее 2", 1, true), "отклонённые отчёты")
+	T.ok(b:find("проверка: cffff0000сломалось", 1, true), "ошибка без цветового кода")
+	local tt = setmetatable({}, { __index = function() return function() end end })
+	for _, cl in pairs(c) do
+		for _, l in ipairs(cl.ns.Debug.Lines()) do
+			if l.tip then l.tip(tt) end
+		end
+	end
+	B.ns.db.errors = {}
+	e.down = nil
+
+	-- Окно на «Отладке» обновляется само; офицер потерял флаг звания — вкладка закрылась.
+	A.ns.UI.frame.scripts.OnUpdate(A.ns.UI.frame, 6)
+	w.guilds["Чиллзон"].officers = { [0] = true }
+	A:Fire("GUILD_RANKS_UPDATE")
+	w:Run(30)
+	T.eq(A.ns.UI.Current(), "chat", "без офицерского флага — снова чат")
+	T.no(A.ns.UI.tabs.debug:IsShown(), "значок пропал")
+	Errors(c)
+end)
+
 T.test("окно: чат гильдии «Чиллзон» и общий канал «Чиллзон» различимы", function()
 	local _, c = Build({ run = 60 })
 	local A = c.A

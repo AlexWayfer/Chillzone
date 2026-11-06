@@ -147,6 +147,7 @@ local function decPerson(entry)
 end
 
 Codec.MAX_OFFICERS = 30
+Codec.MAX_VETERANS = 30
 Codec.MAX_RANKS = 10
 Codec.MAX_ZONES = 60
 
@@ -173,6 +174,8 @@ function Codec.EncodeReport(r)
 	for i = 1, 7 do levels[i] = floor((r.levels and r.levels[i]) or 0) end
 	local officers = {}
 	for i = 1, math.min(#(r.officers or {}), Codec.MAX_OFFICERS) do officers[i] = encPerson(r.officers[i]) end
+	local veterans = {}
+	for i = 1, math.min(#(r.veterans or {}), Codec.MAX_VETERANS) do veterans[i] = encPerson(r.veterans[i]) end
 	local classes = {}
 	for file, n in pairs(r.classes or {}) do
 		local code = classCode(file)
@@ -199,6 +202,7 @@ function Codec.EncodeReport(r)
 		floor((r.avgLevel or 0) * 10 + 0.5),
 		r.faction == "Horde" and "H" or "A",
 		Codec.Base36(r.st) or "",
+		concat(veterans, ","), -- с 0.2: связные (звание Config.RELAY_RANK)
 	}, "~")
 end
 
@@ -226,12 +230,17 @@ function Codec.DecodeReport(s)
 		for _, count in pairs(counts) do sum = sum + count end
 		if sum > online then return nil end
 	end
-	local officers = {}
-	for entry in (f[15] or ""):gmatch("[^,]+") do
-		if #officers >= Codec.MAX_OFFICERS then break end
-		local o = decPerson(entry)
-		if o then officers[#officers + 1] = o end
+	local function people(field, max)
+		local out = {}
+		for entry in (field or ""):gmatch("[^,]+") do
+			if #out >= max then break end
+			local o = decPerson(entry)
+			if o then out[#out + 1] = o end
+		end
+		return out
 	end
+	local officers = people(f[15], Codec.MAX_OFFICERS)
+	local veterans = people(f[21], Codec.MAX_VETERANS)
 	return {
 		guild = guild,
 		total = total,
@@ -247,6 +256,7 @@ function Codec.DecodeReport(s)
 		levels = levels,
 		ranks = decList(f[14], Codec.MAX_RANKS),
 		officers = officers,
+		veterans = veterans,
 		inactive7 = math.min(num(f[16]) or 0, total),
 		inactive30 = math.min(num(f[17]) or 0, total),
 		avgLevel = (num(f[18]) or 0) / 10,
@@ -561,17 +571,20 @@ end
 -- Выборы
 ---------------------------------------------------------------------------
 
--- Один репортёр на гильдию: наименьший Key среди тех, кто на связи. Если хоть кто-то
--- делится зонами, выбирают только из них. Все считают одинаково — переговоры не нужны.
+-- Один репортёр на гильдию: наименьший Key среди тех, кто на связи и кому гильдия доверяет
+-- связь (trusted(key); nil — всем). Если хоть кто-то из них делится зонами, выбирают только
+-- из делящихся. Все считают одинаково — переговоры не нужны. Нет ни одного доверенного — nil.
 -- peers: [key] = { t = последний H1, z = делится зонами }.
-function Codec.PickReporter(selfKey, selfShares, peers, now, window)
-	local anyShares = selfShares and true or false
-	for _, p in pairs(peers) do
-		if now - p.t <= window and p.z then anyShares = true end
-	end
-	local best = (not anyShares or selfShares) and selfKey or nil
+function Codec.PickReporter(selfKey, selfShares, peers, now, window, trusted)
+	local function ok(key) return trusted == nil or trusted(key) == true end
+	local selfOk = selfKey ~= nil and ok(selfKey)
+	local anyShares = selfOk and selfShares and true or false
 	for key, p in pairs(peers) do
-		if now - p.t <= window and (p.z or not anyShares) and (not best or key < best) then best = key end
+		if now - p.t <= window and p.z and ok(key) then anyShares = true end
+	end
+	local best = selfOk and (not anyShares or selfShares) and selfKey or nil
+	for key, p in pairs(peers) do
+		if now - p.t <= window and (p.z or not anyShares) and ok(key) and (not best or key < best) then best = key end
 	end
 	return best
 end

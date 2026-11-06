@@ -1,6 +1,8 @@
 -- Chillzone: общий чат гильдий «Чиллзон». /cz1 — все, /cz2 — офицеры, /cz3 — главы
--- гильдий и офицеры главной гильдии. Строка уходит тремя путями (текст в скрытый канал,
--- M1 по GUILD, через реле), на приёме все три сходятся в Chat.Receive с дедупликацией.
+-- гильдий и офицеры главной гильдии. Строка уходит двумя путями (M1 по GUILD — своей
+-- гильдии, через реле — остальным), на приёме оба сходятся в Chat.Receive с дедупликацией.
+-- Скрытого канала нет: его мог открыть /join любой, кто знает название, и писать от имени
+-- любой гильдии. Из каналов прежних версий аддон выходит при входе.
 -- Строки хранятся в истории и уходят событием CHAT в окно Chillzone (ChatPane.lua); копия —
 -- в чат игры, с меткой канала-ссылкой: клик по ней открывает окно на этом канале.
 -- Формат вывода и окно вывода — по образцу Olympus Channels.lua.
@@ -37,17 +39,20 @@ local nextId = math.random(0, 9999)
 ---------------------------------------------------------------------------
 
 -- Уровень по рангу в гильдии: 3 — глава или офицер главной гильдии, 2 — офицер, 1 — участник.
-function Chat.LevelOf(guild, rank)
+-- officer — офицерское ли звание (Roster.IsOfficerRank или список офицеров в отчёте); nil —
+-- по Config.OFFICER_RANK.
+function Chat.LevelOf(guild, rank, officer)
 	if rank == nil then return 1 end
 	if rank == 0 then return 3 end
-	if rank <= C.OFFICER_RANK then return U.IsMainGuild(guild) and 3 or 2 end
+	if officer == nil then officer = rank <= C.OFFICER_RANK end
+	if officer then return U.IsMainGuild(guild) and 3 or 2 end
 	return 1
 end
 
 function Chat.MyLevel()
 	local g, rank = ns.MyGuild()
 	if not g or not U.IsMemberGuild(g) then return 0 end
-	return Chat.LevelOf(g, rank)
+	return Chat.LevelOf(g, rank, ns.Roster.IsOfficerRank(rank))
 end
 
 -- Уровень отправителя, насколько я могу его проверить. 0 — подделка.
@@ -56,10 +61,12 @@ function Chat.VerifiedLevel(guild, sender)
 	local myRank = ns.Roster.RankOf(sender)
 	if mine and U.GuildKey(guild) == U.GuildKey(mine) then
 		if myRank == nil then return 0 end -- назвался моей гильдией, но его нет в ростере
-		return Chat.LevelOf(guild, myRank)
+		return Chat.LevelOf(guild, myRank, ns.Roster.IsOfficerRank(myRank))
 	end
 	if myRank ~= nil then return 0 end -- согильдиец назвался другой гильдией
-	return Chat.LevelOf(guild, ns.Data.KnownRank(guild, sender))
+	-- В отчёте чужой гильдии есть только глава и офицеры: ранг известен — значит, офицер.
+	local rank = ns.Data.KnownRank(guild, sender)
+	return Chat.LevelOf(guild, rank, rank ~= nil)
 end
 
 ---------------------------------------------------------------------------
@@ -228,8 +235,7 @@ end
 ns.Comm.On("M1", Chat.Receive)
 
 ---------------------------------------------------------------------------
--- Отправка (синхронно, из слэш-команды или Enter в окне: текст в канал требует
--- аппаратного события). true — строка ушла.
+-- Отправка (из слэш-команды или Enter в окне). true — строка ушла.
 ---------------------------------------------------------------------------
 function Chat.Send(tier, text)
 	if not ns.me then return false end
@@ -264,7 +270,6 @@ function Chat.Send(tier, text)
 		nextId = (nextId + 1) % 10000
 		local msg = Codec.EncodeChat(tier, guild, nextId, class, part)
 		if msg then
-			ns.Channel.Send(msg)
 			ns.Comm.Send("GUILD", msg, { prio = true, logged = true })
 			ns.Relay.Out("P", msg)
 			seen[ns.myKey .. "#" .. nextId .. "#" .. part] = now
@@ -315,9 +320,10 @@ function Chat.Submit(channel, text)
 	return Chat.Send(channel, text)
 end
 
--- /cz1–3 с текстом — строка в канал, без текста — окно на этом канале.
+-- /cz1–3 (и /чз1–3) с текстом — строка в канал, без текста — окно на этом канале.
 for i, tier in ipairs({ "A", "C", "L" }) do
 	_G["SLASH_CHILLZONE" .. tier .. "1"] = "/cz" .. i
+	_G["SLASH_CHILLZONE" .. tier .. "2"] = "/чз" .. i
 	SlashCmdList["CHILLZONE" .. tier] = function(msg)
 		if U.Trim(msg) == "" and ns.UI and ns.UI.OpenChat then
 			ns.SafeCall("/cz" .. i, ns.UI.OpenChat, tier, true)
@@ -347,6 +353,47 @@ ns.On("LOGIN", function()
 	pcall(hook, "SetItemRef", function(link, text, button)
 		ns.SafeCall("tag click", Chat.TagClick, link, text, button)
 	end)
+end)
+
+---------------------------------------------------------------------------
+-- Скрытые каналы прежних версий. Игра сама возвращает персонажа в пользовательские
+-- каналы при входе: выходим из них, а их строки и уведомления (сырой «M1~...» старых
+-- клиентов) прячем, пока выход не прошёл.
+---------------------------------------------------------------------------
+local function OldChannel(baseName)
+	if type(baseName) ~= "string" then return false end
+	local f = U.Fold(baseName)
+	for _, name in ipairs(C.OLD_CHANNELS or {}) do
+		if U.Fold(name) == f then return true end
+	end
+	return false
+end
+Chat.IsOldChannel = OldChannel
+
+function Chat.LeaveOldChannels()
+	if not GetChannelName or not LeaveChannelByName then return 0 end
+	local n = 0
+	for _, name in ipairs(C.OLD_CHANNELS or {}) do
+		local id = GetChannelName(name)
+		if (tonumber(id) or 0) > 0 then
+			LeaveChannelByName(name)
+			n = n + 1
+			ns.Log("вышел из старого канала %s", name)
+		end
+	end
+	return n
+end
+
+local function HideOld(_, _, _, _, _, _, _, _, _, _, baseName)
+	return OldChannel(baseName)
+end
+for _, event in ipairs({ "CHAT_MSG_CHANNEL", "CHAT_MSG_CHANNEL_NOTICE", "CHAT_MSG_CHANNEL_NOTICE_USER", "CHAT_MSG_CHANNEL_JOIN", "CHAT_MSG_CHANNEL_LEAVE" }) do
+	ns.AddChatFilter(event, HideOld)
+end
+
+ns.On("LOGIN", function()
+	ns.After(5, "leave old channels", Chat.LeaveOldChannels)
+	ns.After(30, "leave old channels again", Chat.LeaveOldChannels)
 end)
 
 ---------------------------------------------------------------------------

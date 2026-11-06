@@ -11,13 +11,14 @@ local function Setup()
 	return w, g, g.ns
 end
 
-local function Report(ns, guild, st, leader, officers)
+local function Report(ns, guild, st, leader, officers, veterans)
 	local r = {
 		guild = guild, total = 10, online = 4, leader = leader or "Вера Верная", leaderOnline = true,
 		leaderDays = 0, leaderClass = "DRUID", leaderLevel = 60, users = 2,
 		zones = { m1453 = 2 }, classes = { DRUID = 1, WARRIOR = 3 }, levels = { 0, 0, 0, 0, 0, 1, 3 },
 		ranks = { { name = "Глава", count = 1 }, { name = "Офицер", count = 1 }, { name = "Рядовой", count = 8 } },
 		officers = officers or { { name = "Борис Быстрый", online = true, days = 0, class = "WARRIOR", level = 60, rank = 1 } },
+		veterans = veterans or {},
 		inactive7 = 1, inactive30 = 0, avgLevel = 55.5, faction = "Alliance", st = st,
 	}
 	local raw = ns.Codec.EncodeReport(r)
@@ -79,6 +80,17 @@ T.test("data: разные подписи руководства — конфл�
 	T.no(ns.Data.Row("Чиллзон Север").conflict, "конфликт снят")
 end)
 
+T.test("data: разные связные в отчётах — тоже конфликт", function()
+	local _, _, ns = Setup()
+	local now = ns.ServerTime()
+	local r, raw = Report(ns, "Чиллзон Север", now)
+	T.ok(ns.Data.Take(r, raw, "Свидетель Первый", now), "первый")
+	local fake, fakeRaw = Report(ns, "Чиллзон Север", now + 10, nil, nil,
+		{ { name = "Самозванец Ложный", online = true, days = 0, class = "MAGE", level = 60, rank = 2 } })
+	T.ok(ns.Data.Take(fake, fakeRaw, "Свидетель Второй", now + 10), "второй принят")
+	T.ok(ns.Data.Row("Чиллзон Север").conflict, "помечено «!»")
+end)
+
 T.test("data: сроки FRESH, TOTAL_KEEP, KEEP", function()
 	local _, _, ns = Setup()
 	local C = ns.Config
@@ -107,14 +119,24 @@ end)
 
 T.test("data: главная гильдия решает судьбу выученных реле", function()
 	local _, _, ns = Setup()
+	ns.Config.TRUST_ANY_MEMBER = false
 	local now = ns.ServerTime()
-	T.eq(ns.Data.IsMainLeader("Карл Великий", now), nil, "без отчёта главной — неизвестно")
-	local r, raw = Report(ns, "Чиллзон", now, "Карл Великий", { { name = "Арагорн Светлый", online = true, days = 0, class = "MAGE", level = 60, rank = 1 } })
+	T.eq(ns.Data.IsMainTrusted("Карл Великий", now), nil, "без отчёта главной — неизвестно")
+	local r, raw = Report(ns, "Чиллзон", now, "Карл Великий",
+		{ { name = "Арагорн Светлый", online = true, days = 0, class = "MAGE", level = 60, rank = 1 } },
+		{ { name = "Вадим Ветров", online = true, days = 0, class = "ROGUE", level = 60, rank = 2 } })
 	T.ok(ns.Data.Take(r, raw, "Арагорн Светлый", now), "отчёт главной")
-	T.ok(ns.Data.IsMainLeader("Арагорн Светлый", now), "офицер главной")
-	T.eq(ns.Data.IsMainLeader("Мира Тихая", now), false, "не офицер")
+	T.ok(ns.Data.IsMainTrusted("Арагорн Светлый", now), "офицер главной")
+	T.ok(ns.Data.IsMainTrusted("Вадим Ветров", now), "связной главной")
+	T.eq(ns.Data.IsMainTrusted("Мира Тихая", now), false, "рядовой")
+	T.eq(ns.Data.KnownRank("Чиллзон", "Вадим Ветров", now), nil, "связной — не офицер для уровней чата")
 	ns.store.relays[ns.Util.Key("Мира Тихая")] = { name = "Мира Тихая", t = now }
 	T.eq(ns.Relay.TrustOf("Мира Тихая"), nil, "выученное реле не из руководства главной — не доверено")
 	ns.store.relays[ns.Util.Key("Арагорн Светлый")] = { name = "Арагорн Светлый", t = now }
 	T.eq(ns.Relay.TrustOf("Арагорн Светлый"), "gossip", "из руководства — доверено")
+	ns.store.relays[ns.Util.Key("Вадим Ветров")] = { name = "Вадим Ветров", t = now }
+	T.eq(ns.Relay.TrustOf("Вадим Ветров"), "gossip", "связной главной — доверено")
+	-- Без проверки звания реле может быть любой участник: отчёту главной нечем его опровергнуть.
+	ns.Config.TRUST_ANY_MEMBER = true
+	T.eq(ns.Relay.TrustOf("Мира Тихая"), "gossip", "любой участник — доверено")
 end)

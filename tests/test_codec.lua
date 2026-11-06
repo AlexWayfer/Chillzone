@@ -25,6 +25,9 @@ local function sample()
 			{ name = "Иван Петров", online = true, days = 0, class = "MAGE", level = 60, rank = 1 },
 			{ name = "Анна Ёлкина", online = false, days = 3, class = "PRIEST", level = 58, rank = 1 },
 		},
+		veterans = {
+			{ name = "Пётр Связной", online = true, days = 0, class = "ROGUE", level = 60, rank = 2 },
+		},
 		inactive7 = 20,
 		inactive30 = 9,
 		avgLevel = 41.3,
@@ -40,6 +43,16 @@ T.test("codec: отчёт туда и обратно с кириллицей", f
 	local d = Codec.DecodeReport(s)
 	T.ok(d, "декодировался")
 	T.same(d, r, "round-trip")
+end)
+
+T.test("codec: отчёт прежней версии без связных читается", function()
+	local _, Codec = fresh()
+	local r = sample()
+	local s = Codec.EncodeReport(r):gsub("~[^~]*$", "")
+	local d = Codec.DecodeReport(s)
+	T.ok(d, "декодировался")
+	T.eq(#d.veterans, 0, "связных нет")
+	T.eq(#d.officers, 2, "офицеры на месте")
 end)
 
 T.test("codec: невозможный отчёт отклоняется", function()
@@ -174,6 +187,25 @@ T.test("codec: выборы одинаковы у всех и предпочит
 	for me in pairs(all) do T.eq(pick(me, { ["вера"] = true, ["борис"] = true }), "борис", "наименьший из делящихся у " .. me) end
 	local stale = { ["аааа"] = { t = now - 500, z = true } }
 	T.eq(Codec.PickReporter("борис", false, stale, now, 180), "борис", "старый пир не в счёт")
+end)
+
+T.test("codec: репортёр — только из доверенных", function()
+	local _, Codec = fresh()
+	local now = 1000
+	local all = { ["анна"] = true, ["борис"] = true, ["вера"] = true }
+	local trusted = { ["борис"] = true, ["вера"] = true }
+	local function ok(k) return trusted[k] == true end
+	local function pick(me, zonesOf)
+		local peers = {}
+		for k in pairs(all) do
+			if k ~= me then peers[k] = { t = now - 10, z = zonesOf[k] or false } end
+		end
+		return Codec.PickReporter(me, zonesOf[me] or false, peers, now, 180, ok)
+	end
+	for me in pairs(all) do T.eq(pick(me, {}), "борис", "рядовая Анна не выбирается у " .. me) end
+	for me in pairs(all) do T.eq(pick(me, { ["анна"] = true }), "борис", "зоны рядовой не в счёт у " .. me) end
+	for me in pairs(all) do T.eq(pick(me, { ["вера"] = true }), "вера", "делящийся зонами доверенный у " .. me) end
+	T.eq(Codec.PickReporter("анна", false, {}, now, 180, ok), nil, "одна рядовая — репортёра нет")
 end)
 
 T.test("codec: выбор реле стабилен в окне", function()
