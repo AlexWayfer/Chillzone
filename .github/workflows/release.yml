@@ -1,0 +1,65 @@
+name: Release
+
+# Тег vX.Y.Z → проверки, Chillzone-X.Y.Z.zip и релиз.
+# Если релиза с этим тегом ещё нет — создаётся черновик с шаблоном описания;
+# если есть (создан заранее через gh release create) — к нему прикладывается архив.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Что toc и Config.lua согласны между собой, проверяет tests/test_static.lua.
+      - name: Check version matches tag
+        run: |
+          version="${TAG#v}"
+          toc=$(sed -n 's/^## Version: *//p' Chillzone/Chillzone.toc | tr -d '[:space:]')
+          if [ "$version" != "$toc" ]; then
+            echo "::error file=Chillzone/Chillzone.toc::Тег $TAG, а в Chillzone.toc «## Version: $toc»"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # В архиве одна папка Chillzone — её и распаковывают в AddOns.
+      - name: Build zip
+        run: git archive --format=zip --prefix=Chillzone/ -o "Chillzone-$VERSION.zip" "HEAD:Chillzone"
+
+      - name: Create or update release
+        run: |
+          zip="Chillzone-$VERSION.zip"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$zip" --clobber
+            exit 0
+          fi
+          cat > notes.md <<EOF
+          **Что нового**
+
+          -
+
+          **Установка**
+
+          1. Скачайте \`$zip\` ниже.
+          2. Удалите старую папку \`Chillzone\` и распакуйте новую в \`World of Warcraft\\_forever_\\Interface\\AddOns\\\`.
+          3. Перезапустите игру и проверьте: \`/cz status\`.
+
+          Все команды: \`/cz help\`. Подробности в [docs/DETAILS.md](https://github.com/$GH_REPO/blob/main/docs/DETAILS.md).
+          EOF
+          gh release create "$TAG" "$zip" --draft --verify-tag --title "Chillzone $VERSION" --notes-file notes.md

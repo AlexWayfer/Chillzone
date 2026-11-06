@@ -256,16 +256,16 @@ local function RenderMix(c, y)
 	for i, e in ipairs(c.classes) do
 		local item = LegendItem(i)
 		local col, line = math.floor((i - 1) / perCol), (i - 1) % perCol
-		local x, ly = COL_R_X + col * colW, y + 36 + line * LEGEND_H
-		Place(item.swatch, x, ly + 3)
+		local lx, ly = COL_R_X + col * colW, y + 36 + line * LEGEND_H
+		Place(item.swatch, lx, ly + 3)
 		item.swatch:SetVertexColor(ClassRGB(e.class))
 		item.name:SetText(Views.Name(e.name, e.class))
 		item.name:ClearAllPoints()
-		item.name:SetPoint("TOPLEFT", cardChild, "TOPLEFT", x + 12, -ly)
-		item.name:SetPoint("TOPRIGHT", cardChild, "TOPLEFT", x + colW - 34, -ly)
+		item.name:SetPoint("TOPLEFT", cardChild, "TOPLEFT", lx + 12, -ly)
+		item.name:SetPoint("TOPRIGHT", cardChild, "TOPLEFT", lx + colW - 34, -ly)
 		item.count:SetText(tostring(e.count))
 		item.count:ClearAllPoints()
-		item.count:SetPoint("TOPRIGHT", cardChild, "TOPLEFT", x + colW - 10, -ly)
+		item.count:SetPoint("TOPRIGHT", cardChild, "TOPLEFT", lx + colW - 10, -ly)
 		for _, region in ipairs({ item.swatch, item.name, item.count }) do region:Show() end
 	end
 	for i = n + 1, #legend do
@@ -284,21 +284,21 @@ local function RenderMix(c, y)
 	-- Уровни: семь столбиков, высота — доля от самого большого.
 	Place(w.levels, COL_R_X, y + h)
 	h = h + 20
-	local colW = COL_R_W / #levels
+	local levelW = COL_R_W / #levels
 	for i, col in ipairs(levels) do
 		local e = c.levels[i]
-		local cx = COL_R_X + (i - 1) * colW
+		local cx = COL_R_X + (i - 1) * levelW
 		local barH = c.levelMax > 0 and math.floor(LEVEL_BAR_H * e.count / c.levelMax + 0.5) or 0
 		col.count:SetText(e.count > 0 and tostring(e.count) or "")
 		col.count:ClearAllPoints()
-		col.count:SetPoint("BOTTOM", cardChild, "TOPLEFT", cx + colW / 2, -(y + h + 12 + LEVEL_BAR_H - barH) + 1)
+		col.count:SetPoint("BOTTOM", cardChild, "TOPLEFT", cx + levelW / 2, -(y + h + 12 + LEVEL_BAR_H - barH) + 1)
 		col.bar:ClearAllPoints()
-		col.bar:SetPoint("BOTTOM", cardChild, "TOPLEFT", cx + colW / 2, -(y + h + 12 + LEVEL_BAR_H))
+		col.bar:SetPoint("BOTTOM", cardChild, "TOPLEFT", cx + levelW / 2, -(y + h + 12 + LEVEL_BAR_H))
 		col.bar:SetHeight(math.max(barH, 1))
 		col.bar:SetShown(barH > 0)
 		col.label:SetText(e.label)
 		col.label:ClearAllPoints()
-		col.label:SetPoint("TOP", cardChild, "TOPLEFT", cx + colW / 2, -(y + h + 12 + LEVEL_BAR_H + 2))
+		col.label:SetPoint("TOP", cardChild, "TOPLEFT", cx + levelW / 2, -(y + h + 12 + LEVEL_BAR_H + 2))
 	end
 	return h + 12 + LEVEL_BAR_H + 16
 end
