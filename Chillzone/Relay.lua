@@ -27,6 +27,7 @@ local lastPong = {} -- [Key] = когда отвечали RY
 Relay.stats = { forwarded = 0, delivered = 0, dropped = 0, untrusted = 0 }
 
 local REG_TTL = 2 * C.REG_EVERY + 30
+Relay.REG_TTL = REG_TTL
 local WHISPER_FRESH = 10 -- системное «нет такого игрока» относится к шёпоту не старше
 
 local function Now() return ns.Now() end
@@ -526,12 +527,14 @@ function Relay.Known() return known end
 function Relay.Reporters() return reporters end
 function Relay.HoldSize() return #hold end
 
+-- Состояние реле для показа: подпись и код ("down", "ok", "asked", "unknown").
 local function StateOf(e, now)
-	if e.down and now < e.down then return L.RELAY_DOWN end
-	if Verified(e, now) then return L.RELAY_OK end
-	if e.asked then return L.RELAY_ASKED end
-	return L.RELAY_UNKNOWN
+	if e.down and now < e.down then return L.RELAY_DOWN, "down" end
+	if Verified(e, now) then return L.RELAY_OK, "ok" end
+	if e.asked then return L.RELAY_ASKED, "asked" end
+	return L.RELAY_UNKNOWN, "unknown"
 end
+Relay.StateOf = StateOf
 
 ns.Command("relay", function(arg)
 	local cmd, name = U.Trim(arg):match("^(%S*)%s*(.-)$")
@@ -559,7 +562,7 @@ ns.Command("relay", function(arg)
 	local list = Relay.Candidates()
 	if #list == 0 then ns.Print(L.RELAY_NONE) end
 	for _, e in ipairs(list) do
-		ns.Print("  %s — %s (%s)", U.Display(e.name), StateOf(e, now), Relay.TrustOf(e.name) or "?")
+		ns.Print("  %s — %s (%s)", U.Display(e.name), (StateOf(e, now)), Relay.TrustOf(e.name) or "?")
 	end
 	if Relay.IAmRelay() then
 		local n = 0
