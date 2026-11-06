@@ -28,5 +28,6 @@ Chat.lua
 GuildChat.lua
 Views.lua
 ChatPane.lua
+CensusPane.lua
 UI.lua
 Map.lua

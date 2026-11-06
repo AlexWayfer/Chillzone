@@ -1,5 +1,6 @@
--- Chillzone: содержимое вкладок окна — строки «Переписи» и дерево «Королевства», подсказки.
--- Каждая вкладка — список строк { text, right, indent, tip(tooltip) }; UI.lua их рисует.
+-- Chillzone: содержимое вкладок окна — список гильдий и карточка гильдии «Переписи», дерево
+-- «Королевства» (строки { text, right, indent, tip(tooltip) }, их рисует UI.lua), шапка окна,
+-- строки и люди чата, подсказки.
 local ADDON, ns = ...
 
 local U = ns.Util
@@ -46,7 +47,7 @@ local function GuildLabel(s)
 end
 
 ---------------------------------------------------------------------------
--- Подсказка гильдии
+-- Карточка гильдии на «Переписи» (CensusPane.lua рисует её справа от списка)
 ---------------------------------------------------------------------------
 local function SortedMap(map)
 	local list = {}
@@ -58,41 +59,77 @@ local function SortedMap(map)
 	return list
 end
 
-function Views.GuildTip(tt, s)
+-- «в игре», «не в игре меньше дня», «не в игре 3 дн.»
+function Views.State(online, days)
+	if online then return L.ONLINE end
+	days = math.floor(days or 0)
+	if days < 1 then return L.OFFLINE_TODAY end
+	return L.OFFLINE_DAYS:format(days)
+end
+
+-- 13.5 → «13,5»: в русском дробная часть — через запятую.
+function Views.Decimal(x)
+	return (("%.1f"):format(tonumber(x) or 0):gsub("%.", ","))
+end
+
+local LEVEL_LABELS = { "1-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60" }
+local ZONES_SHOWN = 8
+
+-- Всё, что знаем о гильдии s (строка Data.Summary), разложенное для карточки:
+-- { guild, marks, updated, conflict, stats = { {value, label, green} x4 }, extra, people,
+--   classes = { {class, name, count} }, classTotal, levels = { {label, count} x7 }, levelMax,
+--   zones = { {name, count} }, zoneMax, zonesNote, staleNote }.
+-- Классы, уровни и зоны — только из свежего отчёта (кто в игре сейчас).
+function Views.GuildCard(s)
 	local r = s.r
-	tt:AddLine(Codec.Plain(s.guild), 1, 0.82, 0)
-	if s.conflict then tt:AddLine(L.TIP_CONFLICT, 1, 0.25, 0.25, true) end
-	if s.main then tt:AddLine(L.TIP_MAIN, 0.5, 0.83, 0.76) end
-	tt:AddDoubleLine(L.TIP_MEMBERS, s.total and tostring(s.total) or "?", 0.8, 0.8, 0.8, 1, 1, 1)
-	tt:AddDoubleLine(L.TIP_ONLINE, s.online and tostring(s.online) or L.TIP_STALE, 0.8, 0.8, 0.8, 1, 1, 1)
+	local card = { guild = Codec.Plain(s.guild), main = s.main, mine = s.mine, conflict = s.conflict }
+	local marks = {}
+	if s.main then marks[#marks + 1] = L.CARD_MAIN end
+	if s.mine then marks[#marks + 1] = L.CARD_MINE end
+	card.marks = table.concat(marks, ", ")
+	card.updated = s.mine and L.TIP_FROM_ROSTER or L.TIP_UPDATED:format(Views.Ago(s.age))
+	local officers = #(r.officers or {})
+	card.stats = {
+		{ value = s.total and U.Num(s.total) or "?", label = U.Plural(s.total or 0, L.HEAD_MEMBER_1, L.HEAD_MEMBER_2, L.HEAD_MEMBER_5) },
+		{ value = s.online and U.Num(s.online) or "?", label = L.CARD_ONLINE, green = s.online ~= nil },
+		{ value = U.Num(officers), label = U.Plural(officers, L.CARD_OFFICER_1, L.CARD_OFFICER_2, L.CARD_OFFICER_5) },
+		{ value = Views.Decimal(r.avgLevel), label = L.CARD_AVG },
+	}
+	card.extra = L.CARD_EXTRA:format(r.users or 0, r.inactive7 or 0, r.inactive30 or 0)
+	card.people = {}
+	local function person(p, role)
+		card.people[#card.people + 1] = {
+			name = p.name, class = p.class, level = p.level, days = p.days, role = role,
+			online = (s.fresh and p.online) and true or false, guild = s.guild, main = s.main,
+		}
+	end
 	if r.leader then
-		local state = (s.fresh and r.leaderOnline) and L.ONLINE or L.OFFLINE_DAYS:format(r.leaderDays or 0)
-		tt:AddDoubleLine(L.TIP_LEADER, Views.Name(r.leader, r.leaderClass) .. " " .. GREY .. state .. "|r", 0.8, 0.8, 0.8, 1, 1, 1)
+		person({ name = r.leader, class = r.leaderClass, level = r.leaderLevel, online = r.leaderOnline, days = r.leaderDays }, "leader")
 	end
-	tt:AddDoubleLine(L.TIP_OFFICERS, tostring(#(r.officers or {})), 0.8, 0.8, 0.8, 1, 1, 1)
-	tt:AddDoubleLine(L.TIP_ADDON, tostring(r.users or 0), 0.8, 0.8, 0.8, 1, 1, 1)
-	tt:AddDoubleLine(L.TIP_AVG, ("%.1f"):format(r.avgLevel or 0), 0.8, 0.8, 0.8, 1, 1, 1)
-	tt:AddDoubleLine(L.TIP_INACTIVE, ("%d / %d"):format(r.inactive7 or 0, r.inactive30 or 0), 0.8, 0.8, 0.8, 1, 1, 1)
+	for _, o in ipairs(r.officers or {}) do person(o, "officer") end
 	if s.fresh then
-		local classes = {}
-		for _, e in ipairs(SortedMap(r.classes)) do classes[#classes + 1] = Views.Name(L.CLASS[e.k] or e.k, e.k) .. " " .. e.v end
-		if #classes > 0 then tt:AddLine(L.TIP_CLASSES .. " " .. table.concat(classes, ", "), 0.8, 0.8, 0.8, true) end
-		local lv = r.levels or {}
-		tt:AddLine(L.TIP_LEVELS:format(lv[1] or 0, lv[2] or 0, lv[3] or 0, lv[4] or 0, lv[5] or 0, lv[6] or 0, lv[7] or 0), 0.8, 0.8, 0.8, true)
-		local zones = SortedMap(r.zones)
-		if #zones > 0 then
-			tt:AddLine(L.TIP_ZONES, 1, 0.82, 0)
-			for i = 1, math.min(8, #zones) do
-				tt:AddDoubleLine("  " .. ns.Zones.NameForKey(zones[i].k), tostring(zones[i].v), 0.8, 0.8, 0.8, 1, 1, 1)
-			end
-		elseif not s.mine then
-			tt:AddLine(L.TIP_NO_ZONES, 0.6, 0.6, 0.6, true)
+		card.classes, card.classTotal = {}, 0
+		for _, e in ipairs(SortedMap(r.classes)) do
+			card.classes[#card.classes + 1] = { class = e.k, name = L.CLASS[e.k] or tostring(e.k), count = e.v }
+			card.classTotal = card.classTotal + e.v
 		end
+		card.levels, card.levelMax = {}, 0
+		for i, label in ipairs(LEVEL_LABELS) do
+			local n = (r.levels or {})[i] or 0
+			card.levels[i] = { label = label, count = n }
+			if n > card.levelMax then card.levelMax = n end
+		end
+		card.zones, card.zoneMax = {}, 0
+		for i, e in ipairs(SortedMap(r.zones)) do
+			if i > ZONES_SHOWN then break end
+			card.zones[i] = { name = ns.Zones.NameForKey(e.k), count = e.v }
+			if e.v > card.zoneMax then card.zoneMax = e.v end
+		end
+		if #card.zones == 0 then card.zonesNote = s.mine and L.CARD_NO_ZONES or L.TIP_NO_ZONES end
+	else
+		card.staleNote = L.CARD_STALE
 	end
-	local ranks = {}
-	for _, e in ipairs(r.ranks or {}) do ranks[#ranks + 1] = Codec.Plain(e.name) .. " " .. e.count end
-	if #ranks > 0 then tt:AddLine(L.TIP_RANKS .. " " .. table.concat(ranks, ", "), 0.6, 0.6, 0.6, true) end
-	tt:AddLine(s.mine and L.TIP_FROM_ROSTER or L.TIP_UPDATED:format(Views.Ago(s.age)), 0.6, 0.6, 0.6)
+	return card
 end
 
 ---------------------------------------------------------------------------
@@ -145,28 +182,23 @@ function Views.StatusTip(tt, now)
 	tt:AddLine(L.HEAD_TIP_MORE, 0.6, 0.6, 0.6)
 end
 
-function Views.Census()
-	local lines = {}
-	local list = ns.Data.Summary()
-	if #list == 0 then
-		lines[#lines + 1] = { text = GREY .. L.CENSUS_EMPTY .. "|r", wrap = true }
-		return lines
-	end
-	for _, s in ipairs(list) do
+-- Список гильдий слева на «Переписи»: { key, s, text, right, sub }. Подробности — Views.GuildCard.
+function Views.CensusRows(now)
+	local out = {}
+	for _, s in ipairs(ns.Data.Summary(now)) do
 		local right
 		if s.recent then
-			right = (s.online and (WHITE .. s.online .. "|r") or (GREY .. "?|r")) .. GREY .. " / |r" .. s.total
+			right = (s.online and (GREEN .. U.Num(s.online) .. "|r") or (GREY .. "?|r")) .. GREY .. " / |r" .. U.Num(s.total or 0)
 		else
 			right = GREY .. L.CENSUS_OLD:format(Views.Ago(s.age)) .. "|r"
 		end
 		local leader = s.r.leader and (Dot(s.fresh and s.r.leaderOnline) .. Views.Name(s.r.leader, s.r.leaderClass)) or GREY .. "—|r"
-		lines[#lines + 1] = { text = GuildLabel(s), right = right, tip = function(tt) Views.GuildTip(tt, s) end }
-		lines[#lines + 1] = {
-			text = GREY .. L.CENSUS_LEADER .. "|r " .. leader .. GREY .. ", " .. (s.mine and L.TIP_FROM_ROSTER or Views.Ago(s.age)) .. "|r",
-			indent = 1, tip = function(tt) Views.GuildTip(tt, s) end,
+		out[#out + 1] = {
+			key = U.GuildKey(s.guild), s = s, text = GuildLabel(s), right = right,
+			sub = GREY .. L.CENSUS_LEADER .. "|r " .. leader,
 		}
 	end
-	return lines
+	return out
 end
 
 ---------------------------------------------------------------------------
@@ -177,7 +209,7 @@ local function PersonTip(p, role, guild)
 		tt:AddLine(Views.Name(p.name, p.class))
 		tt:AddLine(role .. ", " .. Codec.Plain(guild), 0.8, 0.8, 0.8)
 		if p.level and p.level > 0 then tt:AddLine(L.TIP_LEVEL:format(p.level), 0.8, 0.8, 0.8) end
-		tt:AddLine(p.online and L.ONLINE or L.OFFLINE_DAYS:format(p.days or 0), 0.6, 0.6, 0.6)
+		tt:AddLine(Views.State(p.online, p.days), 0.6, 0.6, 0.6)
 	end
 end
 
@@ -356,7 +388,7 @@ function Views.PersonTip(tt, p)
 		tt:AddLine(L.TIP_LEVEL:format(p.level) .. (p.class and L.CLASS[p.class] and (", " .. L.CLASS[p.class]) or ""), 0.8, 0.8, 0.8)
 	end
 	if p.zone and p.online then tt:AddLine(Codec.Plain(p.zone), 0.8, 0.8, 0.8) end
-	if p.role ~= "active" then tt:AddLine(p.online and L.ONLINE or L.OFFLINE_DAYS:format(p.days or 0), 0.6, 0.6, 0.6) end
+	if p.role ~= "active" then tt:AddLine(Views.State(p.online, p.days), 0.6, 0.6, 0.6) end
 	if p.wrote then tt:AddLine(L.TIP_WROTE:format(Views.Ago(ns.ServerTime() - p.wrote)), 0.6, 0.6, 0.6) end
 	tt:AddLine(L.TIP_CLICK_WHISPER, 0.5, 0.83, 0.76)
 end

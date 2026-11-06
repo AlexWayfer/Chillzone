@@ -349,3 +349,99 @@ T.test("окно: «В сети» под списком людей — про л
 	T.ok(all >= 3 and all < V.ns.Views.Status().total, "главы, а не все участники")
 	Errors(c)
 end)
+
+T.test("перепись: список гильдий и карточка выбранной", function()
+	local _, c = Build()
+	local B = c.B
+	local P = B.ns.CensusPane
+	B.ns.UI.Toggle("census")
+	local f = P.frames
+	local key = B.ns.Util.GuildKey
+	T.eq(P.Selected(), key("Чиллзон Север"), "сразу выбрана своя гильдия")
+	local shown, sel = 0, nil
+	for _, r in ipairs(f.rows) do
+		if r:IsShown() then
+			shown = shown + 1
+			if r.sel:IsShown() then sel = r.name:GetText() end
+		end
+	end
+	T.eq(shown, 3, "три гильдии в списке")
+	T.ok(sel and sel:find("Чиллзон Север", 1, true), "выделена своя: " .. tostring(sel))
+	local w = f.w
+	T.eq(w.title:GetText(), "Чиллзон Север", "название в карточке")
+	T.eq(w.marks:GetText(), "ваша гильдия", "отметка своей")
+	local row
+	for _, s in ipairs(B.ns.Data.Summary()) do
+		if s.mine then row = s end
+	end
+	T.eq(w.tiles[1].value:GetText(), B.ns.Util.Num(row.total), "плитка: участников")
+	T.eq(w.tiles[2].value:GetText(), B.ns.Util.Num(row.online), "плитка: в игре")
+	T.eq(w.tiles[3].value:GetText(), tostring(#row.r.officers), "плитка: офицеров")
+	T.ok(not w.tiles[4].value:GetText():find(".", 1, true), "средний уровень через запятую")
+	-- Подпись классов: по строке на класс, имя и число отдельно — не рвутся переносом.
+	local card = B.ns.Views.GuildCard(row)
+	local items = 0
+	for i, e in ipairs(f.legend) do
+		if e.name:IsShown() then
+			items = items + 1
+			T.eq(e.count:GetText(), tostring(card.classes[i].count), "число класса " .. i)
+			T.ok(e.name:GetText():find(card.classes[i].name, 1, true), "имя класса " .. i)
+		end
+	end
+	T.ok(#card.classes > 0, "в игре есть классы")
+	T.eq(items, #card.classes, "строк подписи — сколько классов в игре")
+	-- Руководство: глава первой, щелчок — шёпот в окне чата.
+	local first = f.people[1]
+	T.ok(first:IsShown() and first.person.name == "Вера Верная" and first.person.role == "leader", "глава первой")
+	first.scripts.OnClick(first)
+	T.eq(B.ns.UI.Current(), "chat", "щелчок по имени открывает чат")
+	T.eq(B.ns.ChatPane.frames.box:GetText(), "/w Вера Верная ", "и шёпот в поле")
+	-- Другая гильдия: главная.
+	B.ns.UI.Toggle("census")
+	P.Select(key("Чиллзон"))
+	T.eq(w.title:GetText(), "Чиллзон", "выбрана главная")
+	T.eq(w.marks:GetText(), "главная гильдия", "отметка главной")
+	T.eq(P.Selected(), key("Чиллзон"), "выбор держится")
+	B.ns.UI.Render()
+	T.eq(P.Selected(), key("Чиллзон"), "и после перерисовки")
+	Errors(c)
+end)
+
+T.test("перепись: данные карточки", function()
+	local _, c = Build()
+	local V = c.B.ns.Views
+	T.eq(V.State(true, 5), "в игре", "в игре")
+	T.eq(V.State(false, 0), "не в игре меньше дня", "меньше дня, а не «0 дн.»")
+	T.eq(V.State(false, 3), "не в игре 3 дн.", "дни")
+	T.eq(V.Decimal(13.5), "13,5", "запятая")
+	T.eq(V.Decimal(60), "60,0", "целое")
+	local s = {
+		guild = "Тестовая Чиллзон", fresh = true, recent = true, age = 120, total = 25, online = 3,
+		r = {
+			leader = "Глава Тестовый", leaderClass = "MAGE", leaderOnline = true, leaderDays = 0,
+			officers = { { name = "Офицер Первый", class = "ROGUE", online = false, days = 2, rank = 1 } },
+			users = 2, avgLevel = 31.3, inactive7 = 4, inactive30 = 1,
+			classes = { MAGE = 2, ROGUE = 1 }, levels = { 1, 0, 0, 2, 0, 0, 0 }, zones = {},
+			ranks = { { name = "Глава", count = 1 }, { name = "Офицер", count = 1 }, { name = "Ранг 3", count = 0 }, { name = "Новичок", count = 23 } },
+		},
+	}
+	local card = V.GuildCard(s)
+	T.eq(card.stats[1].label, "участников", "25 участников")
+	T.eq(card.stats[3].value .. " " .. card.stats[3].label, "1 офицер", "1 офицер")
+	T.eq(card.stats[4].value, "31,3", "средний уровень")
+	T.eq(#card.people, 2, "глава и офицер")
+	T.ok(card.people[1].online and not card.people[2].online, "в игре — по свежему отчёту")
+	T.eq(card.classTotal, 3, "классы в игре")
+	T.eq(card.classes[1].class, "MAGE", "сначала самый частый")
+	T.eq(card.levelMax, 2, "самый высокий столбик")
+	T.eq(card.levels[7].label, "60", "последний столбик — 60")
+	T.eq(card.zonesNote, "Репортёр этой гильдии не делится зонами.", "зоны не присланы")
+	T.eq(card.ranks, nil, "строки рангов в карточке нет")
+	T.ok(card.updated:find("обновлено", 1, true), "когда обновлено")
+	s.fresh = false
+	card = V.GuildCard(s)
+	T.eq(card.classes, nil, "без свежего отчёта классов нет")
+	T.ok(card.staleNote, "и есть пояснение")
+	T.ok(not card.people[1].online, "без свежего отчёта никто не «в игре»")
+	Errors(c)
+end)

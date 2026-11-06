@@ -207,7 +207,7 @@ T.test("relay: команды, окно и вкладки без ошибок", 
 	T.eq(c.B:Saw("меня не видно"), 0, "игнор работает")
 	T.eq(c.A:Saw("меня не видно"), 1, "у других видно")
 	c.B.ns.Map.RefreshNow()
-	local census = c.B.ns.Views.Census()
+	local census = c.B.ns.Views.CensusRows()
 	local kingdom = c.B.ns.Views.Kingdom()
 	local function has(lines, text)
 		for _, l in ipairs(lines) do

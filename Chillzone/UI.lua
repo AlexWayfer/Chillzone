@@ -176,13 +176,20 @@ function UI.Render()
 	body:Show()
 	if current == "settings" then
 		scroll:Hide()
+		ns.CensusPane.Hide()
 		settings:Show()
 		for _, c in ipairs(checks) do c:SetChecked(c.get() and true or false) end
 		return
 	end
 	settings:Hide()
+	if current == "census" then
+		scroll:Hide()
+		ns.CensusPane.Show()
+		return
+	end
+	ns.CensusPane.Hide()
 	scroll:Show()
-	RenderRows(current == "kingdom" and ns.Views.Kingdom() or ns.Views.Census())
+	RenderRows(ns.Views.Kingdom())
 end
 
 local function SelectTab(key)
@@ -309,6 +316,7 @@ local function Create()
 	child:SetSize(WIDTH - 50, 10)
 	scroll:SetScrollChild(child)
 	BuildSettings(body)
+	ns.CensusPane.Build(body)
 	body:Hide()
 
 	ns.ChatPane.Build(f)
