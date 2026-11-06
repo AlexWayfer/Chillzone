@@ -42,7 +42,7 @@ local ROLE_ICON = {
 }
 local TIP_LINKS = { item = true, spell = true, enchant = true, quest = true, talent = true }
 
-local pane, list, chatArea, messages, jump, box, prompt, title, count, people, peopleChild, empty
+local pane, list, chatArea, messages, jump, box, prompt, title, scope, count, people, peopleChild, empty
 local entries, rows = {}, {}
 local current = "A"
 local shown = false
@@ -152,10 +152,18 @@ local function Entry(i)
 	e.ring:SetSize(44, 44)
 	e.ring:SetPoint("CENTER", e.icon, "CENTER", 0, 0)
 	if not Atlas(e.ring, "communities-ring-gold") then e.ring:Hide() end
+	-- Название и под ним, цветом канала, чей он: «чат гильдии» или «все гильдии, /cz1».
 	e.name = e:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	e.name:SetJustifyH("LEFT")
-	e.name:SetPoint("LEFT", e.icon, "RIGHT", 9, 0)
-	e.name:SetPoint("RIGHT", e, "RIGHT", -30, 0)
+	e.name:SetPoint("BOTTOMLEFT", e.icon, "RIGHT", 9, 1)
+	e.name:SetPoint("BOTTOMRIGHT", e, "RIGHT", -30, 1)
+	e.sub = e:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	e.sub:SetJustifyH("LEFT")
+	e.sub:SetPoint("TOPLEFT", e.icon, "RIGHT", 9, -2)
+	e.sub:SetPoint("TOPRIGHT", e, "RIGHT", -30, -2)
+	for _, fs in ipairs({ e.name, e.sub }) do
+		if fs.SetWordWrap then fs:SetWordWrap(false) end
+	end
 	e.dot = e:CreateTexture(nil, "OVERLAY")
 	e.dot:SetSize(17, 17)
 	e.dot:SetPoint("RIGHT", -10, 0)
@@ -174,7 +182,10 @@ function ChatPane.RenderList()
 		local e = Entry(i)
 		e.channel = ch
 		SetIcon(e.icon, ICONS[ch])
-		e.name:SetText(Codec.Plain(Chat.Label(ch)))
+		-- В узком списке «Офицеры гильдии» не влезают: короче, гильдию и так называет подпись.
+		e.name:SetText(ch == "O" and L.CHAN_OFFICER_SHORT or Codec.Plain(Chat.Label(ch)))
+		e.sub:SetText(Chat.Scope(ch))
+		e.sub:SetTextColor(Chat.Color(ch))
 		if ch == current then e.sel:Show() else e.sel:Hide() end
 		local n = unread[ch] or 0
 		e.dot:SetShown(n > 0)
@@ -323,6 +334,8 @@ end
 local function RenderHeader()
 	if not title then return end
 	title:SetText(Codec.Plain(Chat.Label(current)))
+	scope:SetText(Chat.Scope(current, true))
+	scope:SetTextColor(Chat.Color(current))
 	local online, total = ChatPane.Counts(current)
 	count:SetText(L.WIN_ONLINE:format(online, total))
 end
@@ -333,7 +346,7 @@ end
 local function SetPrompt()
 	if not box then return end
 	local r, g, b = Chat.Color(current)
-	prompt:SetText(Codec.Plain(Chat.Label(current)) .. ":")
+	prompt:SetText(Codec.Plain(Chat.Prompt(current)) .. ":")
 	prompt:SetTextColor(r, g, b)
 	box:SetTextColor(r, g, b)
 	box:SetTextInsets((prompt:GetStringWidth() or 0) + 8, 4, 0, 0)
@@ -501,6 +514,8 @@ function ChatPane.Build(host)
 	end
 	title = pane:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	title:SetPoint("BOTTOMLEFT", inset, "TOPLEFT", 8, 8)
+	scope = pane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	scope:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 8, 1)
 
 	messages = CreateFrame("ScrollingMessageFrame", nil, chatArea)
 	messages:SetAllPoints(chatArea)
@@ -609,7 +624,7 @@ function ChatPane.Build(host)
 		end
 	end)
 	pane:Hide()
-	ChatPane.frames = { pane = pane, messages = messages, box = box, keyButton = keyButton }
+	ChatPane.frames = { pane = pane, messages = messages, box = box, keyButton = keyButton, entries = entries, title = title, scope = scope, prompt = prompt }
 	return pane
 end
 

@@ -261,3 +261,30 @@ T.test("окно: вкладки, каналы, ссылки и шёпот бе�
 	T.eq(#A.ns.char.history.G, 0, "история прежней гильдии стёрта")
 	Errors(c)
 end)
+
+T.test("окно: чат гильдии «Чиллзон» и общий канал «Чиллзон» различимы", function()
+	local _, c = Build({ run = 60 })
+	local A = c.A
+	A.ns.UI.OpenChat("G")
+	local f = A.ns.ChatPane.frames
+	local seen = {}
+	for _, e in ipairs(f.entries) do
+		if e:IsShown() then
+			local text = e.name:GetText() .. " / " .. e.sub:GetText()
+			T.no(seen[text], "одинаковые строки в списке каналов: " .. text)
+			seen[text] = true
+		end
+	end
+	T.ok(seen["Чиллзон / чат гильдии"], "чат гильдии подписан")
+	T.ok(seen["Чиллзон / все гильдии"], "общий канал подписан")
+	T.ok(seen["Офицеры / чат гильдии"] and seen["Офицеры / все гильдии"], "оба «Офицеры» различимы")
+	T.ok(seen["Главы / все гильдии"], "«Главы» подписаны")
+	T.eq(f.prompt:GetText(), "Гильдия:", "поле ввода чата гильдии — как в игре")
+	T.eq(f.scope:GetText(), "чат гильдии", "подпись в шапке")
+	A.ns.ChatPane.Select("A")
+	T.eq(f.prompt:GetText(), "Чиллзон:", "поле ввода общего канала")
+	T.eq(f.scope:GetText(), "все гильдии «Чиллзон», /cz1", "шапка общего канала — с командой")
+	A.ns.ChatPane.Select("O")
+	T.eq(f.title:GetText(), "Офицеры гильдии", "в шапке — полное название")
+	Errors(c)
+end)

@@ -111,6 +111,20 @@ function Chat.Label(channel)
 	return L["TIER_" .. channel]
 end
 
+-- Подпись в поле ввода: чат гильдии — «Гильдия», как в чате игры; остальные — по названию.
+function Chat.Prompt(channel)
+	if channel == "G" then return L.CHAN_GUILD end
+	return Chat.Label(channel)
+end
+
+-- Чей канал: своей гильдии или всех гильдий «Чиллзон»; long — для шапки, с командой /cz1–3.
+-- Без этого чат гильдии «Чиллзон» и общий канал «Чиллзон» в списке не различить.
+function Chat.Scope(channel, long)
+	if Chat.GUILD_CHANNELS[channel] then return L.SCOPE_GUILD end
+	if long then return L.SCOPE_ALL_CMD:format(Chat.TIER_LEVEL[channel] or 1) end
+	return L.SCOPE_ALL
+end
+
 -- Строки канала, старые первыми: { t, s (имя), g (гильдия), c (класс), x (текст) }.
 function Chat.History(channel)
 	if Chat.GUILD_CHANNELS[channel] then
