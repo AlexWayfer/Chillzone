@@ -1,0 +1,8 @@
+# В репозитории тексты хранятся с LF, как бы ни был настроен git у участника.
+* text=auto
+
+*.png binary
+*.jpg binary
+*.tga binary
+*.blp binary
+*.zip binary

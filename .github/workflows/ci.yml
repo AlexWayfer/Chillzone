@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Тот же набор проверок перед сборкой релиза (release.yml).
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # В PR старый прогон не нужен после нового пуша; на main доводим каждый.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Luacheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Настройки — в .luacheckrc; libs/ не проверяются.
+      - uses: lunarmodules/luacheck@v1.2.0
+
+  test:
+    name: Tests (${{ matrix.interpreter }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        interpreter: [lua5.1, luajit]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Lua interpreters and the game-compatible bit library
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends lua5.1 lua-bitop luajit
+      - name: Run functional, cryptographic and adversarial tests
+        env:
+          CZ_TEST_PROGRESS: '1'
+        run: ${{ matrix.interpreter }} tests/run.lua

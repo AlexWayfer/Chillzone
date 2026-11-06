@@ -5,7 +5,7 @@ local ADDON, ns = ...
 local U = {}
 ns.Util = U
 
-local byte, char, floor = string.byte, string.char, math.floor
+local byte, char = string.byte, string.char
 
 ---------------------------------------------------------------------------
 -- Регистр. string.lower в игре трогает только ASCII, поэтому заглавные А–Я и Ё

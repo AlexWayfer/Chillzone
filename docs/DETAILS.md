@@ -208,17 +208,24 @@ C.GUILDS = {}              -- необязательный белый списо
 Chillzone/          аддон (копируется в AddOns)
 tests/              тесты: luajit tests/run.lua
 reference/          Olympus 1.5.0 для справки (не в git)
+.github/workflows/  CI и сборка релиза
+.luacheckrc         настройки luacheck
 ```
 
-Тесты запускаются так:
+Тесты и линтер запускаются так (luajit и luacheck на Windows ставятся через `scoop install luajit luacheck`):
 
 ```bash
 luajit tests/run.lua
+luacheck .
 ```
 
-Они проверяют:
+CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) запускает и то и другое на каждый PR и пуш в `main`.
 
-- синтаксис Lua 5.1, отсутствие BOM и утечек глобалов;
+luacheck следит за глобалами: аддон может писать только в перечисленные в `globals` из `.luacheckrc`, а читать — только Lua 5.1 и API игры из `read_globals`. Понадобилась новая функция игры — добавьте её в `read_globals`. Папка `Chillzone/libs` не проверяется.
+
+Тесты проверяют:
+
+- синтаксис Lua 5.1, отсутствие BOM и утечек глобалов, одинаковую версию в `Chillzone.toc` и `Config.lua`;
 - регистр кириллицы, правило гильдии, имена Forever;
 - кодек отчётов и чата, куски, выборы;
 - приём отчётов и сроки хранения;
@@ -226,5 +233,14 @@ luajit tests/run.lua
 - окно чата: каналы по рангу, отправка из поля ввода, чат гильдии и офицеров, шёпот, метка-ссылка, непрочитанные, люди справа, привязка Enter в бою и вне боя.
 
 Код выхода ненулевой, если хоть один тест упал.
+
+### Выпуск версии
+
+1. Поднять версию в двух местах: `## Version:` в `Chillzone/Chillzone.toc` и `C.VERSION` в `Chillzone/Config.lua`. Закоммитить в `main`.
+2. Поставить тег и запушить его: `git tag v0.3.0 && git push origin v0.3.0`.
+3. [`.github/workflows/release.yml`](../.github/workflows/release.yml) проверит, что тег совпадает с версией в toc, прогонит тесты и luacheck, соберёт `Chillzone-0.3.0.zip` (в нём одна папка `Chillzone`) и создаст черновик релиза с шаблоном описания.
+4. Дописать в черновике «Что нового» и опубликовать.
+
+Можно и наоборот: сначала `gh release create v0.3.0 --notes-file notes.md` с готовым описанием — тогда workflow приложит архив к уже созданному релизу.
 
 Лицензия — MIT, см. [LICENSE](../LICENSE).

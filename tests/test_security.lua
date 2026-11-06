@@ -119,7 +119,8 @@ local function Fields(tag, values)
     return table.concat(out)
 end
 local function Seed(cl)
-    for _, saved in pairs(cl.ns.db.securityKeys) do return cl.ns.Ed25519.FromB64(saved.seed) end
+    local _, saved = next(cl.ns.db.securityKeys)
+    return saved and cl.ns.Ed25519.FromB64(saved.seed)
 end
 local function ReplaceDuringRealVerification(receiver, oldGuild, newPublic, body)
     local Ed, real = receiver.ns.Ed25519, receiver.ns.Ed25519.Verify

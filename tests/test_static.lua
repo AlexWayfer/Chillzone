@@ -12,6 +12,15 @@ T.test("static: toc перечисляет существующие файлы",
 	end
 end)
 
+-- Версия записана дважды: toc показывает её игре, C.VERSION уходит в приветствие другим клиентам.
+T.test("static: версия в toc и Config.lua совпадает", function()
+	local toc = T.read(T.ROOT .. "/Chillzone/Chillzone.toc"):match("## Version:%s*([^\r\n]-)%s*[\r\n]")
+	local cfg = T.read(T.ROOT .. "/Chillzone/Config.lua"):match('C%.VERSION%s*=%s*"([^"]+)"')
+	T.ok(toc, "нет ## Version в Chillzone.toc")
+	T.ok(cfg, "нет C.VERSION в Config.lua")
+	T.eq(cfg, toc, "C.VERSION против ## Version")
+end)
+
 T.test("static: синтаксис всех файлов", function()
 	for _, f in ipairs(files) do
 		local chunk, err = loadfile(T.ROOT .. "/Chillzone/" .. f)

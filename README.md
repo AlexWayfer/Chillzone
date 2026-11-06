@@ -1,5 +1,7 @@
 # Chillzone
 
+[![CI](https://github.com/FiNEk/Chillzone/actions/workflows/ci.yml/badge.svg)](https://github.com/FiNEk/Chillzone/actions/workflows/ci.yml)
+
 Аддон для **WoW: Forever**. Связывает все гильдии, в названии которых есть «Чиллзон».
 
 - **Общий чат** на три уровня: все участники, офицеры, главы.
@@ -48,9 +50,12 @@
 ```bash
 luajit tests/run.lua
 lua5.1 tests/run.lua
+luacheck .
 ```
 
 Для обычного Lua 5.1 нужна библиотека LuaBitOp (`lua-bitop` в Ubuntu); в игровом клиенте `bit` уже встроен. CI проверяет обе версии интерпретатора.
+
+То же самое CI запускает на каждый PR и пуш в `main`. Как выпустить версию — в [docs/DETAILS.md](docs/DETAILS.md#выпуск-версии).
 
 ## Лицензия
 
