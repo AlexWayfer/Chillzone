@@ -37,5 +37,5 @@ SOFTWARE.
 |---|---|---|
 | LibStub | — | общественное достояние (public domain) |
 | CallbackHandler-1.0 | r8 | BSD-подобная лицензия Ace3, см. `libs/CallbackHandler-1.0/LICENSE-Ace3.txt` |
-| HereBeDragons-2.0 | r33 | лицензия автора (Nevcairiel), см. <https://github.com/Nevcairiel/HereBeDragons>; файл лицензии в поставке Olympus отсутствовал |
+| HereBeDragons-2.0 | r33 | BSD (`X-License` в `HereBeDragons.toc` автора, Nevcairiel), см. <https://github.com/Nevcairiel/HereBeDragons> |
 | HereBeDragons-Pins-2.0 | r17 | то же |
