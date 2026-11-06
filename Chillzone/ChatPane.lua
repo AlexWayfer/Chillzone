@@ -284,7 +284,7 @@ end
 function ChatPane.RenderPeople()
 	peopleDirty = false
 	if not peopleChild then return end
-	local items = Views.People(current)
+	local items, online = Views.People(current)
 	for i, p in ipairs(items) do
 		local r = PeopleRow(i)
 		if p.header then
@@ -318,17 +318,24 @@ function ChatPane.RenderPeople()
 	end
 	for i = #items + 1, #rows do rows[i]:Hide() end
 	peopleChild:SetHeight(math.max(#items * PEOPLE_ROW, 10))
+	if count then count:SetText(L.WIN_ONLINE:format(ChatPane.Counts(current, items, online))) end
 end
 
--- «В игре: X/Y» над списком людей: своя гильдия — по ростеру, уровни — по переписи.
-function ChatPane.Counts(channel)
-	if Chat.GUILD_CHANNELS[channel] then
+-- «В сети: X из Y» под списком людей — про людей этого канала. В чате гильдии — согильдийцы по
+-- ростеру (в списке только те, кто в игре); в остальных — люди списка: офицеры гильдии, главы
+-- и офицеры гильдий «Чиллзон», писавшие за час. Общий счёт всех гильдий — в шапке окна (UI.lua).
+function ChatPane.Counts(channel, items, online)
+	if channel == "G" then
 		local r = ns.Roster.report
 		if r then return r.online or 0, r.total or 0 end
 		return 0, 0
 	end
-	local _, total, online = ns.Data.Totals()
-	return online, total
+	if not items then items, online = Views.People(channel) end
+	local n = 0
+	for _, p in ipairs(items) do
+		if not p.header then n = n + 1 end
+	end
+	return online or 0, n
 end
 
 local function RenderHeader()
@@ -336,8 +343,6 @@ local function RenderHeader()
 	title:SetText(Codec.Plain(Chat.Label(current)))
 	scope:SetText(Chat.Scope(current, true))
 	scope:SetTextColor(Chat.Color(current))
-	local online, total = ChatPane.Counts(current)
-	count:SetText(L.WIN_ONLINE:format(online, total))
 end
 
 ---------------------------------------------------------------------------
@@ -497,8 +502,9 @@ function ChatPane.Build(host)
 	local peopleBg = people:CreateTexture(nil, "BACKGROUND")
 	peopleBg:SetTexture("Interface\\FrameGeneral\\UI-Background-Marble")
 	peopleBg:SetAllPoints(people)
+	-- Сколько людей канала в сети — под списком: над ним, справа вверху, шапка окна (UI.lua).
 	count = pane:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	count:SetPoint("BOTTOMLEFT", people, "TOPLEFT", 0, 17)
+	count:SetPoint("TOPLEFT", people, "BOTTOMLEFT", 2, -7)
 
 	-- Сообщения: TOPLEFT списка каналов TOPRIGHT (31,-46) → BOTTOMLEFT людей (-22,28).
 	chatArea = CreateFrame("Frame", nil, pane)
@@ -624,7 +630,7 @@ function ChatPane.Build(host)
 		end
 	end)
 	pane:Hide()
-	ChatPane.frames = { pane = pane, messages = messages, box = box, keyButton = keyButton, entries = entries, title = title, scope = scope, prompt = prompt }
+	ChatPane.frames = { pane = pane, messages = messages, box = box, keyButton = keyButton, entries = entries, title = title, scope = scope, prompt = prompt, count = count }
 	return pane
 end
 

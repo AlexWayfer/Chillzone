@@ -19,6 +19,7 @@ local TABS = {
 	{ key = "settings", text = "TAB_SETTINGS", icons = { "Interface\\Icons\\INV_Misc_Gear_01" } },
 }
 local frame, body, scroll, child, settings = nil, nil, nil, nil, nil
+local status, heading -- шапка (крупно и мелко) и название вкладки слева вверху
 local tabs, rows, checks = {}, {}, {}
 local current = "chat"
 local minimapButton
@@ -146,9 +147,26 @@ end
 ---------------------------------------------------------------------------
 -- Окно
 ---------------------------------------------------------------------------
+-- Шапка окна: текст из Views.Status (общий счёт всех гильдий «Чиллзон»).
+function UI.RenderStatus()
+	if not status or not frame:IsShown() then return end
+	local st = ns.Views.Status()
+	status.big:SetText(st.big)
+	status.small:SetText(st.small)
+	-- Наведение — на ширину текста, а не на все 300 точек.
+	local w = math.max(status.big:GetStringWidth() or 0, status.small:GetStringWidth() or 0)
+	if w > 0 then status:SetWidth(math.ceil(w) + 4) end
+end
+
 function UI.Render()
 	if not frame or not frame:IsShown() then return end
 	for key, tab in pairs(tabs) do tab:SetChecked(key == current) end
+	UI.RenderStatus()
+	local def
+	for _, t in ipairs(TABS) do
+		if t.key == current then def = t end
+	end
+	heading:SetText(current ~= "chat" and def and L[def.text] or "")
 	if current == "chat" then
 		body:Hide()
 		ns.ChatPane.Show()
@@ -253,6 +271,32 @@ local function Create()
 	if f.Inset then f.Inset:Hide() end
 	tinsert(UISpecialFrames, "ChillzoneFrame")
 
+	-- Шапка, как у Olympus: справа вверху крупно — все участники гильдий «Чиллзон», мелко — сколько
+	-- в игре, гильдий и когда обновлено. Одна на все вкладки; наведение — по гильдиям.
+	status = CreateFrame("Frame", nil, f)
+	status:SetPoint("TOPRIGHT", f, "TOPRIGHT", -26, -25)
+	status:SetSize(300, 34)
+	status.big = status:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	status.big:SetPoint("TOPRIGHT", 0, -2)
+	status.big:SetJustifyH("RIGHT")
+	status.small = status:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	status.small:SetPoint("TOPRIGHT", status.big, "BOTTOMRIGHT", 0, -3)
+	status.small:SetJustifyH("RIGHT")
+	status.small:SetTextColor(0.7, 0.7, 0.7)
+	status:EnableMouse(true)
+	SetTip(status, function(tt) ns.Views.StatusTip(tt) end)
+	-- За шапку окно тоже можно таскать.
+	status:RegisterForDrag("LeftButton")
+	status:SetScript("OnDragStart", function() f:StartMoving() end)
+	status:SetScript("OnDragStop", function()
+		f:StopMovingOrSizing()
+		SavePosition(f)
+	end)
+	-- Название вкладки слева вверху (у чата там название канала — ChatPane).
+	heading = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	heading:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 70, -54)
+	UI.status, UI.heading = status, heading
+
 	-- Перепись, Королевство и Настройки — во вставке, как Inset у ButtonFrameTemplate: (4,-60) → (-6,26).
 	local okInset, inset = pcall(CreateFrame, "Frame", nil, f, "InsetFrameTemplate")
 	body = okInset and inset or CreateFrame("Frame", nil, f)
@@ -277,7 +321,7 @@ local function Create()
 		elapsed = elapsed + (dt or 0)
 		if elapsed >= 30 then
 			elapsed = 0
-			if current == "census" or current == "kingdom" then UI.Render() end
+			if current == "census" or current == "kingdom" then UI.Render() else UI.RenderStatus() end
 		end
 	end)
 end
@@ -309,9 +353,11 @@ function UI.Current()
 end
 
 local function Refresh()
-	if frame and frame:IsShown() and (current == "census" or current == "kingdom") then UI.Render() end
+	if not frame or not frame:IsShown() then return end
+	if current == "census" or current == "kingdom" then UI.Render() else UI.RenderStatus() end
 end
 ns.On("DATA", Refresh)
+ns.On("ROSTER", Refresh)
 ns.On("RELAYS", Refresh)
 ns.On("SETTINGS", Refresh)
 ns.On("GUILD_CHANGED", Refresh)

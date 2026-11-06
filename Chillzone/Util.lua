@@ -23,6 +23,24 @@ function U.Fold(s)
 	return s
 end
 
+-- Русская форма слова для числа: 1 участник, 2 участника, 5 участников (11–14 — как 5).
+function U.Plural(n, one, few, many)
+	n = math.abs(math.floor(tonumber(n) or 0))
+	local d, dd = n % 10, n % 100
+	if d == 1 and dd ~= 11 then return one end
+	if d >= 2 and d <= 4 and (dd < 12 or dd > 14) then return few end
+	return many
+end
+
+-- Число с пробелами между тысячами: 40830 → «40 830».
+function U.Num(n)
+	local s = tostring(math.floor(tonumber(n) or 0))
+	local sign, digits = s:match("^(-?)(%d+)$")
+	if not digits then return s end
+	digits = digits:reverse():gsub("(%d%d%d)", "%1 "):reverse():gsub("^ ", "")
+	return sign .. digits
+end
+
 function U.Trim(s)
 	return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end

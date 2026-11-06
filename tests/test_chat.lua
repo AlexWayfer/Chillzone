@@ -288,3 +288,64 @@ T.test("окно: чат гильдии «Чиллзон» и общий кан�
 	T.eq(f.title:GetText(), "Офицеры гильдии", "в шапке — полное название")
 	Errors(c)
 end)
+
+T.test("окно: шапка — все гильдии, как у Olympus", function()
+	local w, c = Build()
+	local B = c.B
+	local guilds, total, online = B.ns.Data.Totals()
+	T.eq(guilds, 3, "три гильдии в переписи")
+	local st = B.ns.Views.Status()
+	T.eq(st.total, total, "всего")
+	T.eq(st.online, online, "в игре")
+	T.eq(st.big, B.ns.Util.Num(total) .. " " .. B.ns.Util.Plural(total, "участник", "участника", "участников"), "крупно")
+	T.ok(st.small:find("3|r гильдии", 1, true), "мелко: 3 гильдии — " .. st.small)
+	T.ok(st.small:find("в игре", 1, true) and st.small:find("обновлено", 1, true), "мелко: в игре, обновлено")
+	B.ns.UI.OpenChat("G")
+	T.eq(B.ns.UI.status.big:GetText(), st.big, "шапка в окне")
+	T.eq(B.ns.UI.heading:GetText(), "", "на чате названия вкладки нет — там канал")
+	B.ns.UI.Toggle("census")
+	T.eq(B.ns.UI.status.big:GetText(), st.big, "та же шапка на «Переписи»")
+	T.eq(B.ns.UI.heading:GetText(), "Перепись", "название вкладки")
+	-- Подсказка: по строке на гильдию.
+	local lines = {}
+	local tt = setmetatable({
+		AddLine = function(_, t) lines[#lines + 1] = t end,
+		AddDoubleLine = function(_, l, r) lines[#lines + 1] = l .. " = " .. r end,
+	}, { __index = function() return function() end end })
+	B.ns.Views.StatusTip(tt)
+	local text = table.concat(lines, "\n")
+	for _, g in ipairs({ "Чиллзон", "Чиллзон Север (моя)", "Орден Чиллзона" }) do
+		T.ok(text:find(g .. " = ", 1, true), "в подсказке " .. g)
+	end
+	-- Подсказка у миникарты — те же две строки.
+	lines = {}
+	B.ns.Views.MinimapTip(tt)
+	T.eq(lines[2], st.big, "миникарта: крупная строка")
+	-- Без переписи — «ждём».
+	local stranger = w:Client({ first = "Никто", surname = "Ничей", guild = nil })
+	T.eq(stranger.ns.Views.Status().big, "Ждём перепись", "без данных")
+	Errors(c)
+end)
+
+T.test("окно: «В сети» под списком людей — про людей канала", function()
+	local w, c = Build()
+	local V = c.V
+	V.ns.UI.OpenChat("G")
+	V.ns.ChatPane.RenderPeople()
+	local r = V.ns.Roster.report
+	local label = V.ns.ChatPane.frames.count
+	T.eq(label:GetText(), ("В сети: %s из %s"):format(r.online, r.total), "чат гильдии — по ростеру")
+	V.ns.ChatPane.Select("O")
+	V.ns.ChatPane.RenderPeople()
+	local items, online = V.ns.Views.People("O")
+	local n = 0
+	for _, p in ipairs(items) do if not p.header then n = n + 1 end end
+	T.eq(label:GetText(), ("В сети: %s из %s"):format(online, n), "офицеры — только офицеры")
+	T.ok(n < r.total, "офицеров меньше, чем всех")
+	V.ns.ChatPane.Select("L")
+	V.ns.ChatPane.RenderPeople()
+	local on, all = V.ns.ChatPane.Counts("L")
+	T.eq(label:GetText(), ("В сети: %s из %s"):format(on, all), "«Главы» — люди списка")
+	T.ok(all >= 3 and all < V.ns.Views.Status().total, "главы, а не все участники")
+	Errors(c)
+end)

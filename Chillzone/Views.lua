@@ -15,6 +15,7 @@ local ICON_OFF = "|TInterface\\FriendsFrame\\StatusIcon-Offline:12|t"
 local ICON_KING = "|TInterface\\GroupFrame\\UI-Group-LeaderIcon:14|t"
 local ICON_OFFICER = "|TInterface\\GroupFrame\\UI-Group-AssistantIcon:12|t"
 local GOLD, GREY, RED, WHITE = "|cffffd100", "|cff999999", "|cffff4040", "|cffffffff"
+local GREEN = "|cff40ff40"
 
 function Views.Ago(seconds)
 	seconds = math.max(0, math.floor(seconds or 0))
@@ -97,10 +98,55 @@ end
 ---------------------------------------------------------------------------
 -- Вкладка «Перепись»
 ---------------------------------------------------------------------------
+-- Шапка окна, как у Olympus: крупно — сколько всего участников во всех гильдиях «Чиллзон»,
+-- мелко — сколько в игре, сколько гильдий и когда пришёл самый свежий отчёт.
+-- { big, small, guilds, total, online, newest (возраст в секундах) }.
+function Views.Status(now)
+	now = now or ns.ServerTime()
+	local st = { guilds = 0, total = 0, online = 0 }
+	for _, s in ipairs(ns.Data.Summary(now)) do
+		if s.recent then
+			st.guilds = st.guilds + 1
+			st.total = st.total + (s.total or 0)
+			st.online = st.online + (s.online or 0)
+			if not st.newest or s.age < st.newest then st.newest = s.age end
+		end
+	end
+	if st.guilds == 0 then
+		st.big, st.small = L.HEAD_WAIT, L.HEAD_WAIT_SUB
+		return st
+	end
+	st.big = U.Num(st.total) .. " " .. U.Plural(st.total, L.HEAD_MEMBER_1, L.HEAD_MEMBER_2, L.HEAD_MEMBER_5)
+	st.small = L.HEAD_SUB:format(
+		GREEN .. U.Num(st.online) .. "|r",
+		WHITE .. st.guilds .. "|r " .. U.Plural(st.guilds, L.HEAD_GUILD_1, L.HEAD_GUILD_2, L.HEAD_GUILD_5),
+		Views.Ago(st.newest))
+	return st
+end
+
+-- Подсказка шапки: по гильдиям, сколько в игре из скольких.
+function Views.StatusTip(tt, now)
+	now = now or ns.ServerTime()
+	local st = Views.Status(now)
+	tt:AddLine(st.big, 1, 0.82, 0)
+	tt:AddLine(st.small, 0.7, 0.7, 0.7)
+	local list = ns.Data.Summary(now)
+	if #list > 0 then tt:AddLine(" ") end
+	for _, s in ipairs(list) do
+		if s.recent then
+			local name = Codec.Plain(s.guild) .. (s.mine and (" " .. L.MINE_MARK) or "")
+			local online = s.online and (GREEN .. U.Num(s.online) .. "|r") or (GREY .. "?|r")
+			local r, g, b = 1, 1, 1
+			if s.main then r, g, b = 1, 0.82, 0 end
+			tt:AddDoubleLine(name, online .. GREY .. " / |r" .. U.Num(s.total or 0), r, g, b, 1, 1, 1)
+		end
+	end
+	tt:AddLine(" ")
+	tt:AddLine(L.HEAD_TIP_MORE, 0.6, 0.6, 0.6)
+end
+
 function Views.Census()
 	local lines = {}
-	local guilds, total, online = ns.Data.Totals()
-	lines[#lines + 1] = { text = WHITE .. L.CENSUS_TOTALS:format(guilds, total, online) .. "|r", header = true }
 	local list = ns.Data.Summary()
 	if #list == 0 then
 		lines[#lines + 1] = { text = GREY .. L.CENSUS_EMPTY .. "|r", wrap = true }
@@ -319,9 +365,10 @@ end
 -- Кнопка у миникарты: подсказка
 ---------------------------------------------------------------------------
 function Views.MinimapTip(tt)
-	local guilds, total, online = ns.Data.Totals()
+	local status = Views.Status()
 	tt:AddLine("Chillzone", 0.5, 0.83, 0.76)
-	tt:AddLine(L.CENSUS_TOTALS:format(guilds, total, online), 1, 1, 1)
+	tt:AddLine(status.big, 1, 0.82, 0)
+	tt:AddLine(status.small, 0.7, 0.7, 0.7)
 	local tree = ns.Data.Kingdom()
 	if tree.king then tt:AddLine(L.ROLE_KING .. ": " .. Views.Name(tree.king.leader, tree.king.leaderClass), 1, 0.82, 0) end
 	tt:AddLine(" ")
