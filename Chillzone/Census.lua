@@ -82,11 +82,6 @@ end)
 -- Отчёты
 ---------------------------------------------------------------------------
 
--- Текст отчёта без времени: по нему видно, изменилось ли что-то.
-local function Body(raw)
-	return (raw:gsub("~[0-9a-z]*$", ""))
-end
-
 function Census.MaybeReport(force)
 	if not Census.IsReporter() then return end
 	local r = ns.Roster.report
@@ -94,8 +89,12 @@ function Census.MaybeReport(force)
 	local now = ns.Now()
 	if not force and now - lastSentAt < C.REPORT_EVERY - 5 then return end
 	r.users = Census.Users()
-	local raw = Codec.EncodeReport(Codec.Shareable(r, ns.char.shareZones))
-	local body = Body(raw)
+	local shareable = Codec.Shareable(r, ns.char.shareZones)
+	local raw = Codec.EncodeReport(shareable)
+	-- Время исключаем только из сравнения, не из отправляемого отчёта.
+	-- Shareable вернул копию: время ростера и все поля (включая связных) сохраняются.
+	shareable.st = 0
+	local body = Codec.EncodeReport(shareable)
 	if not force and body == lastSent and now - lastSentAt < C.REPORT_IDLE then return end
 	lastSent, lastSentAt = body, now
 	Census.lastRaw = raw
