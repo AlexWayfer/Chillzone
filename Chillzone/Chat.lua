@@ -1,6 +1,8 @@
 -- Chillzone: общий чат гильдий «Чиллзон». /cz1 — все, /cz2 — офицеры, /cz3 — главы
 -- гильдий и офицеры главной гильдии. Строка уходит тремя путями (текст в скрытый канал,
 -- M1 по GUILD, через реле), на приёме все три сходятся в Chat.Receive с дедупликацией.
+-- Строки хранятся в истории и уходят событием CHAT в окно Chillzone (ChatPane.lua); копия —
+-- в чат игры, с меткой канала-ссылкой: клик по ней открывает окно на этом канале.
 -- Формат вывода и окно вывода — по образцу Olympus Channels.lua.
 local ADDON, ns = ...
 
@@ -14,6 +16,14 @@ ns.Chat = Chat
 
 Chat.TIER_LEVEL = { A = 1, C = 2, L = 3 }
 Chat.TIER_COLOR = { A = "ff7fd4c1", C = "ff6fa8ff", L = "ffffb347" }
+Chat.TAG_LINK = "addon:Chillzone:chan:"
+-- Каналы окна по порядку: чат гильдии, офицеры гильдии, затем три уровня «Чиллзон».
+Chat.ORDER = { "G", "O", "A", "C", "L" }
+Chat.GUILD_CHANNELS = { G = true, O = true }
+local RGB = {
+	G = { 0.25, 1, 0.25 }, O = { 0.25, 0.75, 0.25 },
+	A = { 0.5, 0.83, 0.76 }, C = { 0.44, 0.66, 1 }, L = { 1, 0.7, 0.28 },
+}
 Chat.stats = { sent = 0, shown = 0, dupes = 0, refused = 0, limited = 0 }
 
 local seen = {} -- [Key#id#text] = время
@@ -73,8 +83,9 @@ function Chat.Frame()
 	return (name and WindowByName(name)) or DEFAULT_CHAT_FRAME
 end
 
+-- Метка канала в чате игры: ссылка addon:Chillzone:chan:<tier>, цветом канала.
 function Chat.Tag(tier)
-	return "|c" .. Chat.TIER_COLOR[tier] .. "[" .. L["TIER_" .. tier] .. "]|r"
+	return "|c" .. Chat.TIER_COLOR[tier] .. "|H" .. Chat.TAG_LINK .. tier .. "|h[" .. L["TIER_" .. tier] .. "]|h|r"
 end
 
 function Chat.Format(tier, guild, sender, class, text)
@@ -85,19 +96,61 @@ function Chat.Format(tier, guild, sender, class, text)
 	return Chat.Tag(tier) .. " |cff999999<" .. g .. ">|r |Hplayer:" .. (U.TellName(sender) or "?") .. "|h[" .. name .. "]|h: " .. Codec.SanitizeChat(text)
 end
 
-local function Remember(tier, guild, sender, class, text)
-	local list = ns.store and ns.store.chat[tier]
-	if not list then return end
-	list[#list + 1] = { t = ns.ServerTime(), s = U.Display(sender), g = guild, c = class, x = text }
+-- Цвет строк канала: чат гильдии и офицеров — как в игре, уровни «Чиллзон» — свои.
+function Chat.Color(channel)
+	local info = Chat.GUILD_CHANNELS[channel] and rawget(_G, "ChatTypeInfo")
+	local t = type(info) == "table" and info[channel == "O" and "OFFICER" or "GUILD"]
+	if type(t) == "table" and t.r then return t.r, t.g, t.b end
+	local c = RGB[channel] or RGB.A
+	return c[1], c[2], c[3]
+end
+
+function Chat.Label(channel)
+	if channel == "G" then return ns.MyGuild() or L.CHAN_GUILD end
+	if channel == "O" then return L.CHAN_OFFICER end
+	return L["TIER_" .. channel]
+end
+
+-- Строки канала, старые первыми: { t, s (имя), g (гильдия), c (класс), x (текст) }.
+function Chat.History(channel)
+	if Chat.GUILD_CHANNELS[channel] then
+		local h = ns.char and ns.char.history
+		return h and h[channel] or {}
+	end
+	return ns.store and ns.store.chat[channel] or {}
+end
+
+-- Добавить строку в историю канала (не больше CHAT_HISTORY) и сообщить окну.
+function Chat.Remember(channel, guild, sender, class, text)
+	local list = Chat.History(channel)
+	local e = { t = ns.ServerTime(), s = U.Display(sender), g = guild, c = class, x = text }
+	list[#list + 1] = e
 	while #list > C.CHAT_HISTORY do table.remove(list, 1) end
+	ns.Fire("CHAT", channel, e)
+	return e
 end
 
 function Chat.Show(tier, guild, sender, class, text)
-	local f = Chat.Frame()
-	if f then f:AddMessage(Chat.Format(tier, guild, sender, class, text)) end
 	Chat.stats.shown = Chat.stats.shown + 1
-	Remember(tier, guild, sender, class, text)
-	ns.Fire("CHAT", tier)
+	if not ns.char or ns.char.chatMirror ~= false then
+		local f = Chat.Frame()
+		if f then f:AddMessage(Chat.Format(tier, guild, sender, class, text)) end
+	end
+	Chat.Remember(tier, guild, sender, class, text)
+end
+
+-- Каналы, доступные мне сейчас, в порядке окна.
+function Chat.Channels()
+	local out = {}
+	if ns.MyGuild() then
+		out[#out + 1] = "G"
+		if ns.GuildChat and ns.GuildChat.CanOfficer() then out[#out + 1] = "O" end
+	end
+	local level = Chat.MyLevel()
+	for _, tier in ipairs({ "A", "C", "L" }) do
+		if level >= Chat.TIER_LEVEL[tier] then out[#out + 1] = tier end
+	end
+	return out
 end
 
 ---------------------------------------------------------------------------
@@ -161,28 +214,29 @@ end
 ns.Comm.On("M1", Chat.Receive)
 
 ---------------------------------------------------------------------------
--- Отправка (синхронно, из слэш-команды: текст в канал требует аппаратного события)
+-- Отправка (синхронно, из слэш-команды или Enter в окне: текст в канал требует
+-- аппаратного события). true — строка ушла.
 ---------------------------------------------------------------------------
 function Chat.Send(tier, text)
-	if not ns.me then return end
+	if not ns.me then return false end
 	local guild = ns.MyGuild()
 	if not guild or not U.IsMemberGuild(guild) then
 		ns.Print(L.CHAT_NOT_MEMBER)
-		return
+		return false
 	end
 	if Chat.MyLevel() < Chat.TIER_LEVEL[tier] then
 		ns.Print(L.CHAT_NO_RIGHTS, L["TIER_" .. tier])
-		return
+		return false
 	end
 	text = Codec.SanitizeChat(text)
 	if text == "" then
 		ns.Print(L.CHAT_USAGE)
-		return
+		return false
 	end
 	local now = ns.Now()
 	if now - lastSend < C.CHAT_GAP then
 		ns.Print(L.CHAT_TOO_FAST)
-		return
+		return false
 	end
 	lastSend = now
 	if not ns.char.warned then
@@ -206,12 +260,80 @@ function Chat.Send(tier, text)
 	end
 	ns.Comm.Flush(2)
 	if cut then ns.Print(L.CHAT_CUT) end
+	return true
 end
 
+-- Кому шепчем: «Имя-Фамилия текст», «Имя Фамилия текст» (на Forever имена из двух слов)
+-- или «Имя текст». Возвращает имя для шёпота и текст.
+function Chat.ParseWhisper(rest)
+	rest = U.Trim(rest)
+	local first, after = rest:match("^(%S+)%s*(.-)$")
+	if not first then return nil end
+	if first:find("-", 1, true) or not ns.splitNames then return U.TellName(first), after end
+	local second, text = after:match("^(%S+)%s*(.-)$")
+	if not second then return nil end
+	return U.TellName(first .. " " .. second), text
+end
+
+local WHISPER = { w = true, whisper = true, t = true, tell = true, ["ш"] = true }
+
+-- Строка из поля ввода окна в канал channel. ok — ушла (поле можно очистить).
+function Chat.Submit(channel, text)
+	text = U.Trim(text)
+	if text == "" then return false end
+	local cmd, rest = text:match("^/(%S+)%s*(.-)$")
+	if cmd then
+		if not WHISPER[U.Fold(cmd)] then
+			ns.Print(L.CHAT_BOX_COMMANDS)
+			return false
+		end
+		local target, said = Chat.ParseWhisper(rest)
+		said = U.Trim(said)
+		if not target or said == "" then
+			ns.Print(L.CHAT_WHISPER_USAGE)
+			return false
+		end
+		SendChatMessage(U.Cut(said, 255), "WHISPER", nil, target)
+		return true
+	end
+	if Chat.GUILD_CHANNELS[channel] then return ns.GuildChat.Send(channel, text) end
+	if not Chat.TIER_LEVEL[channel] then return false end
+	return Chat.Send(channel, text)
+end
+
+-- /cz1–3 с текстом — строка в канал, без текста — окно на этом канале.
 for i, tier in ipairs({ "A", "C", "L" }) do
 	_G["SLASH_CHILLZONE" .. tier .. "1"] = "/cz" .. i
-	SlashCmdList["CHILLZONE" .. tier] = function(msg) ns.SafeCall("/cz" .. i, Chat.Send, tier, msg or "") end
+	SlashCmdList["CHILLZONE" .. tier] = function(msg)
+		if U.Trim(msg) == "" and ns.UI and ns.UI.OpenChat then
+			ns.SafeCall("/cz" .. i, ns.UI.OpenChat, tier, true)
+			return
+		end
+		ns.SafeCall("/cz" .. i, Chat.Send, tier, msg or "")
+	end
 end
+
+---------------------------------------------------------------------------
+-- Клик по метке канала в чате игры. Ссылки addon: игра на Forever отдаёт своему
+-- обработчику, который ничего не делает (проверено Olympus, Channels.lua 1.2.1); мы
+-- ловим клик пост-хуком SetItemRef и открываем своё окно — поле ввода игры не трогаем.
+---------------------------------------------------------------------------
+function Chat.TagClick(link, _, button)
+	if type(link) ~= "string" or link:sub(1, #Chat.TAG_LINK) ~= Chat.TAG_LINK then return false end
+	if button and button ~= "LeftButton" then return false end
+	local tier = link:sub(#Chat.TAG_LINK + 1)
+	if not Chat.TIER_LEVEL[tier] or not (ns.UI and ns.UI.OpenChat) then return false end
+	ns.UI.OpenChat(tier, true)
+	return true
+end
+
+ns.On("LOGIN", function()
+	local hook = rawget(_G, "hooksecurefunc")
+	if type(hook) ~= "function" then return end
+	pcall(hook, "SetItemRef", function(link, text, button)
+		ns.SafeCall("tag click", Chat.TagClick, link, text, button)
+	end)
+end)
 
 ---------------------------------------------------------------------------
 -- Команды

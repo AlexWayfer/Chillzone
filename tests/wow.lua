@@ -108,12 +108,35 @@ function World:Say(from, msg, id)
 	end
 end
 
+-- Обычный чат гильдии и офицеров: сервер отдаёт строку всем в игре (и автору), офицерам — по рангу.
+function World:GuildSay(from, msg, kind)
+	local event = kind == "OFFICER" and "CHAT_MSG_OFFICER" or "CHAT_MSG_GUILD"
+	self.log[#self.log + 1] = { t = self.now, from = from:Name(), dist = kind, msg = msg }
+	for _, c in ipairs(self.clients) do
+		if c.online and c.guild == from.guild and (kind ~= "OFFICER" or c.rank <= 1) then
+			local stamp = Stamp(from)
+			self:Schedule(self.now + 0.05, function() c:Fire(event, msg, stamp, "", "", stamp, "", 0, 0, "", 0, 1, from:Guid()) end, c)
+		end
+	end
+end
+
+function World:Whisper(from, msg, target)
+	self.log[#self.log + 1] = { t = self.now, from = from:Name(), dist = "CHAT_WHISPER", msg = msg, target = target }
+	local to = self:FindByTell(target)
+	if not to then return end
+	local stamp = Stamp(from)
+	self:Schedule(self.now + 0.05, function() to:Fire("CHAT_MSG_WHISPER", msg, stamp) end, to)
+end
+
 -- Любое неизвестное поле кадра: и вызывается, и индексируется, ничего не делая.
 local NOOP = setmetatable({}, { __call = function() return nil end })
 getmetatable(NOOP).__index = function() return NOOP end
 
-local function NewFrame(c)
-	local f = { scripts = {}, shown = false }
+-- Кадр-заглушка. Show/Hide зовут OnShow/OnHide; поле ввода хранит текст и фокус;
+-- ScrollingMessageFrame записывает строки в lines.
+local function NewFrame(c, name)
+	local f = { scripts = {}, shown = false, text = "", lines = {}, name = name }
+	if name then c.named[name] = f end
 	local methods = {}
 	function methods.RegisterEvent(self, e)
 		c.handlers[e] = c.handlers[e] or {}
@@ -123,10 +146,30 @@ local function NewFrame(c)
 	function methods.GetScript(self, k) return self.scripts[k] end
 	function methods.HookScript(self, k, fn) self.scripts[k] = fn end
 	function methods.IsShown(self) return self.shown end
-	function methods.Show(self) self.shown = true end
-	function methods.Hide(self) self.shown = false end
+	function methods.Show(self)
+		if self.shown then return end
+		self.shown = true
+		if self.scripts.OnShow then self.scripts.OnShow(self) end
+	end
+	function methods.Hide(self)
+		if not self.shown then return end
+		self.shown = false
+		if self.scripts.OnHide then self.scripts.OnHide(self) end
+	end
+	function methods.SetShown(self, on) if on then self:Show() else self:Hide() end end
 	function methods.CreateFontString() return NewFrame(c) end
 	function methods.CreateTexture() return NewFrame(c) end
+	function methods.SetText(self, t) self.text = t or "" end
+	function methods.GetText(self) return self.text end
+	function methods.Insert(self, t) self.text = self.text .. (t or "") end
+	function methods.SetFocus(self) c.focus = self end
+	function methods.ClearFocus(self) if c.focus == self then c.focus = nil end end
+	function methods.HasFocus(self) return c.focus == self end
+	function methods.SetChecked(self, on) self.checked = on and true or false end
+	function methods.GetChecked(self) return self.checked end
+	function methods.AddMessage(self, t) self.lines[#self.lines + 1] = t end
+	function methods.Clear(self) self.lines = {} end
+	function methods.AtBottom() return true end
 	return setmetatable(f, { __index = function(_, k) return methods[k] or NOOP end })
 end
 
@@ -155,7 +198,7 @@ local function Env(c)
 			return h
 		end,
 	}
-	env.CreateFrame = function() return NewFrame(c) end
+	env.CreateFrame = function(_, name) return NewFrame(c, name) end
 	env.UnitFullName = function(unit) if unit == "player" then return c.first, c.surname end end
 	env.GetNormalizedRealmName = function() return c.realm end
 	env.GetRealmName = function() return c.realm end
@@ -225,10 +268,31 @@ local function Env(c)
 		c.joined[name] = nil
 	end
 	env.SendChatMessage = function(msg, kind, _, id)
-		assert(kind == "CHANNEL")
-		assert(#msg <= 255, "строка канала длиннее 255 байт")
-		w:Say(c, msg, id)
+		assert(#msg <= 255, "строка чата длиннее 255 байт")
+		if kind == "CHANNEL" then return w:Say(c, msg, id) end
+		if kind == "GUILD" or kind == "OFFICER" then return w:GuildSay(c, msg, kind) end
+		if kind == "WHISPER" then return w:Whisper(c, msg, id) end
+		error("SendChatMessage: " .. tostring(kind))
 	end
+	env.GetPlayerInfoByGUID = function(guid)
+		for _, o in ipairs(w.clients) do
+			if o:Guid() == guid then return CLASS_LOCAL[o.class], o.class end
+		end
+	end
+	env.hooksecurefunc = function(name, fn)
+		c.hooks[name] = c.hooks[name] or {}
+		table.insert(c.hooks[name], fn)
+	end
+	env.GetBindingKey = function(action) if action == "OPENCHAT" then return "ENTER" end end
+	env.ClearOverrideBindings = function(owner)
+		for k, b in pairs(c.bindings) do if b.owner == owner then c.bindings[k] = nil end end
+	end
+	env.SetOverrideBindingClick = function(owner, _, key, button)
+		assert(not c.combat, "привязка в бою")
+		c.bindings[key] = { owner = owner, button = button }
+	end
+	env.InCombatLockdown = function() return c.combat == true end
+	env.IsShiftKeyDown = function() return c.shift == true end
 	env.ChatFrame_RemoveChannel = function() end
 	env.ChatFrame_AddMessageEventFilter = function(event, fn)
 		c.filters[event] = c.filters[event] or {}
@@ -252,6 +316,7 @@ function World:Client(opts)
 		faction = opts.faction or "Alliance", guild = opts.guild, rank = opts.rank or 3, class = opts.class or "MAGE",
 		level = opts.level or 60, zone = opts.zone or "Штормград", online = true,
 		handlers = {}, filters = {}, printed = {}, joined = {}, joinedById = {},
+		named = {}, hooks = {}, bindings = {},
 	}, Client)
 	c.env = Env(c)
 	c.ns = {}
@@ -276,6 +341,15 @@ end
 
 function Client:Name()
 	return self.first .. " " .. self.surname
+end
+
+function Client:Guid()
+	return "Player-" .. self.first .. "-" .. self.surname
+end
+
+-- Вызвать пост-хуки, поставленные аддоном через hooksecurefunc(name, ...).
+function Client:CallHooks(name, ...)
+	for _, fn in ipairs(self.hooks[name] or {}) do fn(...) end
 end
 
 function Client:Slash(cmd, text)

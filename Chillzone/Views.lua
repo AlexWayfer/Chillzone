@@ -182,6 +182,140 @@ function Views.Kingdom()
 end
 
 ---------------------------------------------------------------------------
+-- Окно чата: строки сообщений и список людей справа
+---------------------------------------------------------------------------
+local ACTIVE_WINDOW = 3600 -- «писал за последний час»
+local ROLE_ORDER = { leader = 0, officer = 1, member = 2, active = 3 }
+
+-- Строка канала для окна: [время] [Имя] <Гильдия>: текст. Имя — ссылка player.
+function Views.ChatLine(e, channel, showTime)
+	local link = "|Hplayer:" .. (U.TellName(e.s) or "?") .. "|h[" .. Views.Name(e.s, e.c) .. "]|h"
+	local guild = ""
+	if not ns.Chat.GUILD_CHANNELS[channel] and e.g then guild = " " .. GREY .. "<" .. Codec.Plain(e.g) .. ">|r" end
+	local stamp = (showTime and date) and (GREY .. date("%H:%M", e.t or 0) .. "|r ") or ""
+	return stamp .. link .. guild .. ": " .. Codec.SanitizeChat(e.x)
+end
+
+local function ByRole(a, b)
+	if ROLE_ORDER[a.role] ~= ROLE_ORDER[b.role] then return ROLE_ORDER[a.role] < ROLE_ORDER[b.role] end
+	if a.role == "active" then return (a.wrote or 0) > (b.wrote or 0) end
+	if (a.online and 1 or 0) ~= (b.online and 1 or 0) then return a.online and true or false end
+	if (a.rank or 9) ~= (b.rank or 9) then return (a.rank or 9) < (b.rank or 9) end
+	return a.name < b.name
+end
+
+-- Своя гильдия по ростеру: в G — кто в игре, в O — офицеры (в игре первыми).
+local function GuildPeople(channel)
+	local list = {}
+	for _, m in ipairs(ns.Roster.members or {}) do
+		local rank = m.rank or 9
+		local officer = rank <= C.OFFICER_RANK
+		if (channel == "G" and m.online) or (channel == "O" and officer) then
+			list[#list + 1] = {
+				name = U.Display(m.name), class = m.class, level = m.level, online = m.online, days = m.days,
+				rank = rank, rankName = m.rankName, zone = m.zone, guild = ns.Roster.guild,
+				role = rank == 0 and "leader" or (officer and "officer" or "member"),
+			}
+		end
+	end
+	table.sort(list, function(a, b)
+		if (a.online and 1 or 0) ~= (b.online and 1 or 0) then return a.online and true or false end
+		if a.rank ~= b.rank then return a.rank < b.rank end
+		return a.name < b.name
+	end)
+	return list
+end
+
+-- Люди канала для правой панели: { header = true, guild, main, count } и строки людей
+-- { name, class, level, online, days, role, guild, wrote }. Второе значение — сколько в сети.
+-- Уровни «Чиллзон»: главы и офицеры гильдий из переписи (в «Главах» — только главы и офицеры
+-- главной гильдии) плюс те, кто писал в канал за последний час.
+function Views.People(channel, now)
+	now = now or ns.ServerTime()
+	local out, online = {}, 0
+	local function add(p)
+		out[#out + 1] = p
+		if p.online then online = online + 1 end
+	end
+	if ns.Chat.GUILD_CHANNELS[channel] then
+		for _, p in ipairs(GuildPeople(channel)) do add(p) end
+		return out, online
+	end
+	local level = ns.Chat.TIER_LEVEL[channel] or 1
+	local active, seen = {}, {}
+	for _, e in ipairs(ns.Chat.History(channel)) do
+		local k = U.Key(e.s)
+		if k and now - (e.t or 0) <= ACTIVE_WINDOW then active[k] = e end
+	end
+	local groups, order = {}, {}
+	local function group(guild, main)
+		local gk = U.GuildKey(guild) or "?"
+		if not groups[gk] then
+			groups[gk] = { guild = guild, main = main, people = {} }
+			order[#order + 1] = gk
+		end
+		return groups[gk]
+	end
+	for _, s in ipairs(ns.Data.Summary(now)) do
+		if s.recent then
+			local g = group(s.guild, s.main)
+			local r = s.r
+			local function person(p, role)
+				local k = U.Key(p.name)
+				if not k or seen[k] then return end
+				seen[k] = true
+				g.people[#g.people + 1] = {
+					name = p.name, class = p.class, level = p.level, online = (s.fresh and p.online) and true or false,
+					days = p.days, role = role, rank = p.rank, guild = s.guild, main = s.main, wrote = active[k] and active[k].t,
+				}
+			end
+			if r.leader then person({ name = r.leader, class = r.leaderClass, level = r.leaderLevel, online = r.leaderOnline, days = r.leaderDays, rank = 0 }, "leader") end
+			if level < 3 or s.main then
+				for _, o in ipairs(r.officers or {}) do person(o, "officer") end
+			end
+		end
+	end
+	for k, e in pairs(active) do
+		if not seen[k] then
+			seen[k] = true
+			local g = group(e.g or "?", U.IsMainGuild(e.g or ""))
+			g.people[#g.people + 1] = { name = e.s, class = e.c, online = now - (e.t or 0) <= C.FRESH, role = "active", guild = e.g, wrote = e.t }
+		end
+	end
+	for _, gk in ipairs(order) do
+		local g = groups[gk]
+		if #g.people > 0 then
+			table.sort(g.people, ByRole)
+			out[#out + 1] = { header = true, guild = g.guild, main = g.main, count = #g.people }
+			for _, p in ipairs(g.people) do add(p) end
+		end
+	end
+	return out, online
+end
+
+-- Подпись роли человека в списке справа.
+function Views.Role(p)
+	if p.role == "active" then return L.ROLE_ACTIVE end
+	if p.rankName then return Codec.Plain(p.rankName) end -- своя гильдия: ранг из ростера
+	if p.role == "leader" then return p.main and L.ROLE_KING or L.ROLE_LORD end
+	if p.role == "officer" then return L.ROLE_CAPTAIN end
+	return ""
+end
+
+function Views.PersonTip(tt, p)
+	tt:AddLine(Views.Name(p.name, p.class))
+	local role = Views.Role(p)
+	tt:AddLine((role ~= "" and (role .. " · ") or "") .. Codec.Plain(p.guild or "?"), 0.8, 0.8, 0.8)
+	if p.level and p.level > 0 then
+		tt:AddLine(L.TIP_LEVEL:format(p.level) .. (p.class and L.CLASS[p.class] and (" · " .. L.CLASS[p.class]) or ""), 0.8, 0.8, 0.8)
+	end
+	if p.zone and p.online then tt:AddLine(Codec.Plain(p.zone), 0.8, 0.8, 0.8) end
+	if p.role ~= "active" then tt:AddLine(p.online and L.ONLINE or L.OFFLINE_DAYS:format(p.days or 0), 0.6, 0.6, 0.6) end
+	if p.wrote then tt:AddLine(L.TIP_WROTE:format(Views.Ago(ns.ServerTime() - p.wrote)), 0.6, 0.6, 0.6) end
+	tt:AddLine(L.TIP_CLICK_WHISPER, 0.5, 0.83, 0.76)
+end
+
+---------------------------------------------------------------------------
 -- Кнопка у миникарты: подсказка
 ---------------------------------------------------------------------------
 function Views.MinimapTip(tt)

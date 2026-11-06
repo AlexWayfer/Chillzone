@@ -134,14 +134,17 @@ end
 
 local DB_DEFAULTS = {
 	schema = 1,
-	settings = { showMap = true, minimap = { angle = 200, hide = false }, debug = false },
+	settings = { showMap = true, minimap = { angle = 200, hide = false }, debug = false, frame = {} },
 	chars = {},
 	realms = {},
 	log = {},
 	errors = {},
 }
 
-local CHAR_DEFAULTS = { shareZones = false, chatOn = true, chatWindow = false, warned = false }
+local CHAR_DEFAULTS = {
+	shareZones = false, chatOn = true, chatWindow = false, warned = false,
+	chatMirror = true, chatTime = false, chatChannel = false, history = { G = {}, O = {} }, historyGuild = false, drafts = {},
+}
 local STORE_DEFAULTS = { guilds = {}, relays = {}, manual = {}, ignore = {}, chat = { A = {}, C = {}, L = {} } }
 
 ns.RegisterEvent("ADDON_LOADED", function(name)

@@ -1,5 +1,7 @@
--- Chillzone: окно (вкладки «Перепись» и «Королевство»), флажки настроек, кнопка у миникарты.
--- Рамка и кнопка у миникарты — по образцу Olympus UI.lua.
+-- Chillzone: окно — как «Гильдия и сообщества»: рамка ButtonFrameTemplate с портретом, вкладки-
+-- значки на правом краю (Чат, Перепись, Королевство, Настройки). Чат рисует ChatPane.lua,
+-- остальные вкладки — список строк из Views.lua во вставке окна. Кнопка у миникарты — по образцу
+-- Olympus UI.lua.
 local ADDON, ns = ...
 
 local L = ns.L
@@ -8,9 +10,17 @@ local UI = {}
 ns.UI = UI
 
 local ROW_H = 18
-local WIDTH, HEIGHT = 470, 500
-local frame, scroll, child, tabs, rows = nil, nil, nil, {}, {}
-local current = "census"
+local WIDTH, HEIGHT = 814, 426
+local ICON = "Interface\\Icons\\Spell_Nature_Tranquility"
+local TABS = {
+	{ key = "chat", text = "TAB_CHAT", icons = { "Interface\\Icons\\UI_Chat", "Interface\\Icons\\INV_Letter_15" } },
+	{ key = "census", text = "TAB_CENSUS", icons = { "Interface\\Icons\\achievement_guildperk_everybodysfriend", "Interface\\Icons\\INV_Misc_Book_09" } },
+	{ key = "kingdom", text = "TAB_KINGDOM", icons = { "Interface\\Icons\\achievement_guildperk_honorablemention", "Interface\\Icons\\INV_Misc_Note_01" } },
+	{ key = "settings", text = "TAB_SETTINGS", icons = { "Interface\\Icons\\INV_Misc_Gear_01" } },
+}
+local frame, body, scroll, child, settings = nil, nil, nil, nil, nil
+local tabs, rows, checks = {}, {}, {}
+local current = "chat"
 local minimapButton
 
 local function SetTip(owner, tip)
@@ -24,6 +34,23 @@ local function SetTip(owner, tip)
 	owner.tip = tip
 end
 
+local function Exists(path)
+	local f = rawget(_G, "GetFileIDFromPath")
+	if type(f) ~= "function" then return true end
+	local ok, id = pcall(f, path)
+	return not ok or id ~= nil
+end
+
+local function FirstIcon(paths)
+	for _, p in ipairs(paths) do
+		if Exists(p) then return p end
+	end
+	return "Interface\\Icons\\INV_Misc_QuestionMark"
+end
+
+---------------------------------------------------------------------------
+-- Строки «Переписи» и «Королевства»
+---------------------------------------------------------------------------
 local function Row(i)
 	local r = rows[i]
 	if r then return r end
@@ -45,11 +72,8 @@ local function Row(i)
 	return r
 end
 
-function UI.Render()
-	if not frame or not frame:IsShown() then return end
-	local lines = current == "kingdom" and ns.Views.Kingdom() or ns.Views.Census()
-	local width = scroll:GetWidth()
-	child:SetWidth(width)
+local function RenderRows(lines)
+	child:SetWidth(scroll:GetWidth() or (WIDTH - 50))
 	local y = 0
 	for i, line in ipairs(lines) do
 		local r = Row(i)
@@ -67,92 +91,218 @@ function UI.Render()
 	end
 	for i = #lines + 1, #rows do rows[i]:Hide() end
 	child:SetHeight(math.max(y, 10))
-	for key, tab in pairs(tabs) do
-		if key == current then tab:LockHighlight() else tab:UnlockHighlight() end
-	end
-	frame.mapCheck:SetChecked(ns.db.settings.showMap)
-	frame.zonesCheck:SetChecked(ns.char.shareZones)
 end
 
-local function Tab(key, text, x)
-	local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	b:SetSize(130, 22)
-	b:SetPoint("TOPLEFT", frame, "TOPLEFT", x, -30)
-	b:SetText(text)
-	b:SetScript("OnClick", function()
-		current = key
-		scroll:SetVerticalScroll(0)
-		UI.Render()
-	end)
-	tabs[key] = b
-end
-
-local function Check(text, tip, x, onClick)
-	local c = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-	c:SetSize(24, 24)
-	c:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", x, 8)
-	local label = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	label:SetPoint("LEFT", c, "RIGHT", 2, 0)
+---------------------------------------------------------------------------
+-- Настройки
+---------------------------------------------------------------------------
+local function Check(key, text, tip, get, set)
+	local c = CreateFrame("CheckButton", nil, settings, "UICheckButtonTemplate")
+	c:SetSize(26, 26)
+	c:SetPoint("TOPLEFT", settings, "TOPLEFT", 16, -16 - #checks * 30)
+	local label = c:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	label:SetPoint("LEFT", c, "RIGHT", 4, 0)
 	label:SetText(text)
-	c:SetScript("OnClick", function(self) ns.SafeCall("check", onClick, self:GetChecked() and true or false) end)
-	SetTip(c, function(tt) tt:AddLine(text, 1, 0.82, 0) tt:AddLine(tip, 1, 1, 1, true) end)
+	c.get = get
+	c:SetScript("OnClick", function(self) ns.SafeCall("check " .. key, set, self:GetChecked() and true or false) end)
+	SetTip(c, function(tt)
+		tt:AddLine(text, 1, 0.82, 0)
+		tt:AddLine(tip, 1, 1, 1, true)
+	end)
+	checks[#checks + 1] = c
 	return c
 end
 
-local function Create()
-	frame = CreateFrame("Frame", "ChillzoneFrame", UIParent, "BasicFrameTemplateWithInset")
-	frame:SetSize(WIDTH, HEIGHT)
-	frame:SetPoint("CENTER", 0, 40)
-	frame:SetFrameStrata("MEDIUM")
-	frame:SetToplevel(true)
-	frame:SetClampedToScreen(true)
-	frame:SetMovable(true)
-	frame:EnableMouse(true)
-	frame:RegisterForDrag("LeftButton")
-	frame:SetScript("OnDragStart", frame.StartMoving)
-	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-	frame:Hide()
-	local title = frame.TitleText or frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	if not frame.TitleText then title:SetPoint("TOP", 0, -5) end
-	title:SetText("Chillzone")
-	tinsert(UISpecialFrames, "ChillzoneFrame")
-
-	Tab("census", L.TAB_CENSUS, 12)
-	Tab("kingdom", L.TAB_KINGDOM, 146)
-
-	scroll = CreateFrame("ScrollFrame", "ChillzoneScroll", frame, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", 12, -58)
-	scroll:SetPoint("BOTTOMRIGHT", -32, 40)
-	child = CreateFrame("Frame", nil, scroll)
-	child:SetSize(WIDTH - 44, 10)
-	scroll:SetScrollChild(child)
-
-	frame.mapCheck = Check(L.CHECK_MAP, L.CHECK_MAP_TIP, 12, function(on) ns.Map.SetEnabled(on) end)
-	frame.zonesCheck = Check(L.CHECK_ZONES, L.CHECK_ZONES_TIP, 200, function(on)
+local function BuildSettings(parent)
+	settings = CreateFrame("Frame", nil, parent)
+	settings:SetAllPoints(parent)
+	Check("map", L.CHECK_MAP, L.CHECK_MAP_TIP, function() return ns.db.settings.showMap end, function(on) ns.Map.SetEnabled(on) end)
+	Check("zones", L.CHECK_ZONES, L.CHECK_ZONES_TIP, function() return ns.char.shareZones end, function(on)
 		ns.char.shareZones = on
 		ns.Print(on and L.ZONES_ON or L.ZONES_OFF)
 		ns.Census.SendHello()
 	end)
+	Check("chat", L.CHECK_CHAT, L.CHECK_CHAT_TIP, function() return ns.char.chatOn end, function(on)
+		ns.char.chatOn = on
+		ns.Print(on and L.CHAT_ON or L.CHAT_OFF)
+	end)
+	Check("mirror", L.CHECK_MIRROR, L.CHECK_MIRROR_TIP, function() return ns.char.chatMirror end, function(on) ns.char.chatMirror = on end)
+	Check("time", L.CHECK_TIME, L.CHECK_TIME_TIP, function() return ns.char.chatTime end, function(on)
+		ns.char.chatTime = on
+		ns.ChatPane.Reload()
+	end)
+	Check("minimap", L.CHECK_MINIMAP, L.CHECK_MINIMAP_TIP, function() return not ns.db.settings.minimap.hide end, function(on)
+		ns.db.settings.minimap.hide = not on
+		UI.UpdateMinimapButton()
+	end)
+	local hint = settings:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+	hint:SetPoint("TOPLEFT", settings, "TOPLEFT", 20, -24 - #checks * 30)
+	hint:SetPoint("RIGHT", settings, "RIGHT", -20, 0)
+	hint:SetJustifyH("LEFT")
+	hint:SetText(L.SETTINGS_HINT)
+	settings:Hide()
+end
 
-	frame:SetScript("OnShow", function() UI.Render() end)
+---------------------------------------------------------------------------
+-- Окно
+---------------------------------------------------------------------------
+function UI.Render()
+	if not frame or not frame:IsShown() then return end
+	for key, tab in pairs(tabs) do tab:SetChecked(key == current) end
+	if current == "chat" then
+		body:Hide()
+		ns.ChatPane.Show()
+		return
+	end
+	ns.ChatPane.Hide()
+	body:Show()
+	if current == "settings" then
+		scroll:Hide()
+		settings:Show()
+		for _, c in ipairs(checks) do c:SetChecked(c.get() and true or false) end
+		return
+	end
+	settings:Hide()
+	scroll:Show()
+	RenderRows(current == "kingdom" and ns.Views.Kingdom() or ns.Views.Census())
+end
+
+local function SelectTab(key)
+	current = key
+	if scroll then scroll:SetVerticalScroll(0) end
+	UI.Render()
+end
+
+-- Вкладки-значки на правом краю, как у окна гильдии (32×32, фон вкладки книги заклинаний).
+local function SideTab(i, def)
+	local b = CreateFrame("CheckButton", nil, frame)
+	b:SetSize(32, 32)
+	if i == 1 then
+		b:SetPoint("TOPLEFT", frame, "TOPRIGHT", 0, -36)
+	else
+		b:SetPoint("TOPLEFT", tabs[TABS[i - 1].key], "BOTTOMLEFT", 0, -20)
+	end
+	local bg = b:CreateTexture(nil, "BACKGROUND")
+	bg:SetTexture("Interface\\SpellBook\\SpellBook-SkillLineTab")
+	bg:SetSize(64, 64)
+	bg:SetPoint("TOPLEFT", -3, 11)
+	b:SetNormalTexture(FirstIcon(def.icons))
+	b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	b:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD")
+	b:SetScript("OnClick", function() ns.SafeCall("tab " .. def.key, SelectTab, def.key) end)
+	SetTip(b, function(tt) tt:AddLine(L[def.text], 1, 1, 1) end)
+	tabs[def.key] = b
+end
+
+local function Portrait(f)
+	local tex = f.portrait or f.Portrait or (f.PortraitContainer and f.PortraitContainer.portrait)
+	if not tex then return end
+	local set = rawget(_G, "SetPortraitToTexture")
+	if type(set) == "function" and pcall(set, tex, ICON) then return end
+	tex:SetTexture(ICON)
+	if tex.SetMask then pcall(tex.SetMask, tex, "Interface\\CharacterFrame\\TempPortraitAlphaMask") end
+end
+
+local function SavePosition(f)
+	local point, _, rel, x, y = f:GetPoint(1)
+	if point then ns.db.settings.frame = { point = point, rel = rel or point, x = x or 0, y = y or 0 } end
+end
+
+local function Create()
+	local ok, f = pcall(CreateFrame, "Frame", "ChillzoneFrame", UIParent, "ButtonFrameTemplate")
+	if not ok or not f then f = CreateFrame("Frame", "ChillzoneFrame", UIParent, "BasicFrameTemplateWithInset") end
+	frame = f
+	UI.frame = f
+	f:SetSize(WIDTH, HEIGHT)
+	local pos = ns.db.settings.frame
+	if pos and pos.point then
+		f:SetPoint(pos.point, UIParent, pos.rel or pos.point, pos.x or 0, pos.y or 0)
+	else
+		f:SetPoint("CENTER", 0, 40)
+	end
+	f:SetFrameStrata("MEDIUM")
+	f:SetToplevel(true)
+	f:SetClampedToScreen(true)
+	f:SetMovable(true)
+	f:EnableMouse(true)
+	f:RegisterForDrag("LeftButton")
+	f:SetScript("OnDragStart", f.StartMoving)
+	f:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		SavePosition(self)
+	end)
+	f:Hide()
+	if type(f.SetTitle) == "function" then
+		pcall(f.SetTitle, f, "Chillzone")
+	else
+		local title = f.TitleText or (f.TitleContainer and f.TitleContainer.TitleText) or f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		if not f.TitleText then title:SetPoint("TOP", 0, -5) end
+		title:SetText("Chillzone")
+	end
+	Portrait(f)
+	-- Крестик закрывает окно без HideUIPanel (та в бою не работает).
+	local close = f.CloseButton or rawget(_G, "ChillzoneFrameCloseButton")
+	if close then close:SetScript("OnClick", function() f:Hide() end) end
+	if f.Inset then f.Inset:Hide() end
+	tinsert(UISpecialFrames, "ChillzoneFrame")
+
+	-- Перепись, Королевство и Настройки — во вставке, как Inset у ButtonFrameTemplate: (4,-60) → (-6,26).
+	local okInset, inset = pcall(CreateFrame, "Frame", nil, f, "InsetFrameTemplate")
+	body = okInset and inset or CreateFrame("Frame", nil, f)
+	body:SetPoint("TOPLEFT", f, "TOPLEFT", 4, -60)
+	body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 26)
+	scroll = CreateFrame("ScrollFrame", nil, body, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 8, -8)
+	scroll:SetPoint("BOTTOMRIGHT", -30, 8)
+	child = CreateFrame("Frame", nil, scroll)
+	child:SetSize(WIDTH - 50, 10)
+	scroll:SetScrollChild(child)
+	BuildSettings(body)
+	body:Hide()
+
+	ns.ChatPane.Build(f)
+	for i, def in ipairs(TABS) do SideTab(i, def) end
+
+	f:SetScript("OnShow", function() UI.Render() end)
+	f:SetScript("OnHide", function() ns.ChatPane.Hide() end)
 	local elapsed = 0
-	frame:SetScript("OnUpdate", function(_, dt)
-		elapsed = elapsed + dt
+	f:SetScript("OnUpdate", function(_, dt)
+		elapsed = elapsed + (dt or 0)
 		if elapsed >= 30 then
 			elapsed = 0
-			UI.Render()
+			if current == "census" or current == "kingdom" then UI.Render() end
 		end
 	end)
 end
 
+-- Окно на вкладке tab (без tab — открыть или закрыть).
 function UI.Toggle(tab)
 	if not frame then Create() end
 	if tab then current = tab end
-	if frame:IsShown() and not tab then frame:Hide() else frame:Show() UI.Render() end
+	if frame:IsShown() and not tab then
+		frame:Hide()
+	else
+		frame:Show()
+		UI.Render()
+	end
+end
+
+-- Окно на чате, на канале channel; focus — курсор в поле ввода.
+function UI.OpenChat(channel, focus)
+	if not frame then Create() end
+	current = "chat"
+	frame:Show()
+	UI.Render()
+	ns.ChatPane.Select(channel, focus)
+end
+
+-- Открытая вкладка или nil, если окно закрыто.
+function UI.Current()
+	return frame and frame:IsShown() and current or nil
 end
 
 local function Refresh()
-	if frame and frame:IsShown() then UI.Render() end
+	if frame and frame:IsShown() and (current == "census" or current == "kingdom") then UI.Render() end
 end
 ns.On("DATA", Refresh)
 ns.On("RELAYS", Refresh)
@@ -180,7 +330,7 @@ local function CreateButton()
 	bg:SetSize(20, 20)
 	bg:SetPoint("TOPLEFT", 6, -6)
 	local icon = b:CreateTexture(nil, "ARTWORK")
-	icon:SetTexture("Interface\\Icons\\Spell_Nature_Tranquility")
+	icon:SetTexture(ICON)
 	icon:SetSize(18, 18)
 	icon:SetPoint("TOPLEFT", 7, -7)
 	if icon.SetMask then pcall(icon.SetMask, icon, "Interface\\CharacterFrame\\TempPortraitAlphaMask") end
@@ -234,3 +384,4 @@ end, L.HELP_MINIMAP)
 
 ns.Command("kingdom", function() UI.Toggle("kingdom") end, L.HELP_KINGDOM)
 ns.Command("census", function() UI.Toggle("census") end, L.HELP_CENSUS)
+ns.Command("settings", function() UI.Toggle("settings") end, L.HELP_SETTINGS)

@@ -25,6 +25,8 @@ Census.lua
 Relay.lua
 Channel.lua
 Chat.lua
+GuildChat.lua
 Views.lua
+ChatPane.lua
 UI.lua
 Map.lua
