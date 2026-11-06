@@ -389,7 +389,7 @@ T.test("relay: из отвечающих реле первыми выбираю�
 end)
 
 T.test("relay: из старых скрытых каналов аддон выходит, их строки спрятаны", function()
-	local w, c = Build()
+	local w = Build()
 	local N = w:Client({ first = "Нина", surname = "Новая", guild = "Чиллзон Север", rank = 3, relays = RELAY })
 	N.joined["ChillzoneA"], N.joinedById[7] = 7, "ChillzoneA"
 	w:Run(10)

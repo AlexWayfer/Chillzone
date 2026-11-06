@@ -134,7 +134,6 @@ end
 local function PumpOnce(prioOnly)
 	local job = queue[1]
 	if not job or (prioOnly and not job.prio) then return false end
-	local now = ns.Now()
 	if job.dist == "GUILD" and not ns.MyGuild() then
 		Finish(job, false, "no guild")
 		return true

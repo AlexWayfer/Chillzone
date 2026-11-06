@@ -205,7 +205,7 @@ T.test("окно: люди справа", function()
 end)
 
 T.test("окно: Enter при открытом окне и в бою", function()
-	local w, c = Build({ run = 60 })
+	local _, c = Build({ run = 60 })
 	local B = c.B
 	B.ns.UI.OpenChat("A")
 	local bind = B.bindings.ENTER
@@ -395,7 +395,7 @@ T.test("окно: шапка — все гильдии, как у Olympus", func
 end)
 
 T.test("окно: «В сети» под списком людей — про людей канала", function()
-	local w, c = Build()
+	local _, c = Build()
 	local V = c.V
 	V.ns.UI.OpenChat("G")
 	V.ns.ChatPane.RenderPeople()

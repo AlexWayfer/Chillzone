@@ -13,7 +13,6 @@
 local ADDON, ns = ...
 
 local U = ns.Util
-local C = ns.Config
 local L = ns.L
 local Codec = ns.Codec
 local Chat = ns.Chat
