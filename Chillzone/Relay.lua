@@ -554,8 +554,6 @@ ns.On("LOGIN", function()
 		if not ns.IsMember() then return end
 		if ns.Census.IsReporter() then
 			Relay.EnsureRegistered()
-		elseif not Relay.IAmRelay() and not Relay.Pick() then
-			Relay.PingAll()
 		end
 	end)
 	ns.Every(15, "relay discovery", function()

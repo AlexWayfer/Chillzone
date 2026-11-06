@@ -153,7 +153,7 @@ end
 function S.CheckCertificate(raw, sender, done)
     local c = Certificate(raw)
     if not c or not Current(c) or (sender and c.key ~= U.Key(sender)) then return false end
-    if c.approvedRoot == Root(c.guild).public then done(c); return true end
+    if c.approvedRoot == Root(c.guild).public then Keep(c); done(c); return true end
     if not Budget(sender or c.name) then return false end
     return Job(function() return VerifyCertificate(raw) end, function(valid)
         if valid and Current(valid) then Keep(valid); done(valid) else S.stats.rejected = S.stats.rejected + 1 end
@@ -208,6 +208,7 @@ local function Pin(guild, name, public)
     if old then return true end
     s.roots[gk] = { name = name, public = public, guild = guild }
     if not old and gk == GuildKey() then ShareRoot(guild, s.roots[gk]) end
+    ns.Fire("AUTH_ROOT", guild)
     return true
 end
 local function Authority()

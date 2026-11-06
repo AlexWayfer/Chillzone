@@ -14,6 +14,7 @@ ns.Census = Census
 local peers = {} -- [Key] = { t, z, r, name, version }: согильдийцы с аддоном
 local lastSent, lastSentAt = nil, -1e9
 local lastQ1Answer = -1e9
+local trustCatchupPending = false
 
 function Census.Peers()
 	return peers
@@ -140,6 +141,25 @@ ns.Comm.On("Q1", function(_, sender, dist)
 	for _, c in ipairs(ns.Data.Cached()) do
 		ns.Comm.Send("GUILD", Codec.EncodeRM("RG", "L", c.origin, c.raw), { key = "q1:" .. c.key })
 	end
+end)
+
+-- Reports received before a new root was approved were correctly rejected.
+-- Recover them once from the local reporter, after its normal Q1 cooldown.
+-- Several roots arriving together share one request; no author is contacted.
+ns.On("AUTH_ROOT", function()
+	if trustCatchupPending then return end
+	trustCatchupPending = true
+	ns.After(C.Q1_GAP + math.random(5, 15), "census after trust bootstrap", function()
+		trustCatchupPending = false
+		if not ns.IsMember() then return end
+		for _, root in pairs(ns.Security.Roots()) do
+			local row = ns.Data.Row(root.guild)
+			if not row or not row.r then
+				ns.Comm.Send("GUILD", "Q1~", { key = "census-request" })
+				return
+			end
+		end
+	end)
 end)
 
 ---------------------------------------------------------------------------

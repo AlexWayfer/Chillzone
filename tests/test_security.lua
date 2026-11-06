@@ -122,6 +122,22 @@ local function Seed(cl)
     local _, saved = next(cl.ns.db.securityKeys)
     return saved and cl.ns.Ed25519.FromB64(saved.seed)
 end
+T.test("security: a previously verified credential is retained when its peer announces it", function()
+    local w, c = Build()
+    local certificate = assert(c.B.ns.Security.MyCertificate())
+    local S, U = c.G.ns.Security, c.G.ns.Util
+    T.ok(S.CheckCertificate(certificate.raw, certificate.name, function() end))
+    w:Run(2)
+    local known = c.G.ns.store.security.certs[U.GuildKey(certificate.guild)]
+    -- KA verifies and caches its embedded issuer before a following KP announces
+    -- the same identity. Signature caching must not bypass identity retention.
+    known[certificate.key] = nil
+    T.eq(S.Member(certificate.guild, certificate.name), nil, "identity has not been retained")
+    local announced
+    T.ok(S.CheckCertificate(certificate.raw, certificate.name, function(valid) announced = valid end))
+    T.ok(announced, "cached real signature is accepted")
+    T.ok(S.Member(certificate.guild, certificate.name), "peer announcement retains the verified identity")
+end)
 local function ReplaceDuringRealVerification(receiver, oldGuild, newPublic, body)
     local Ed, real = receiver.ns.Ed25519, receiver.ns.Ed25519.Verify
     local changed = false
@@ -212,8 +228,15 @@ T.test("security: RR cannot replace a reporter using only a guild claim", functi
     local gk = c.A.ns.Util.GuildKey("Чиллзон Север")
     local before = c.A.ns.Relay.Reporters()[gk]
     T.ok(before, "legitimate reporter registered")
-    Whisper(w, c.X, c.A, "RR~Чиллзон Север")
+    -- A certificate is public: stealing the legitimate reporter's certificate
+    -- must not let another native WHISPER sender register under its identity.
+    local forged = "RR~Чиллзон Север~" .. c.X.ns.Ed25519.ToB64(c.V.ns.Security.MyCertificate().raw)
+    Whisper(w, c.X, c.A, forged)
     T.eq(c.A.ns.Relay.Reporters()[gk].key, before.key, "outsider did not replace the reporter")
+    c.A.ns.Config.TRUST_ANY_MEMBER = false
+    Whisper(w, c.X, c.A, forged)
+    T.eq(c.A.ns.Relay.Reporters()[gk].key, before.key, "strict transport setting also rejects the outsider")
+    c.A.ns.Config.TRUST_ANY_MEMBER = true
     local start = #w.log
     c.G:Slash("/cz3", "private-registration-probe")
     w:Run(35)
@@ -234,6 +257,11 @@ T.test("security: a forged census report never grants a leader role", function()
     T.eq(c.V.ns.Data.KnownRank(guild, c.X:Name()), nil, "self-report grants no rank")
     Whisper(w, c.X, c.A, codec.EncodeRL("P", codec.EncodeChat("L", guild, 9002, "MAGE", "forged-leader-probe")))
     T.eq(c.V:Saw("forged-leader-probe"), 0, "outsider cannot write to leaders")
+    c.A.ns.Config.TRUST_ANY_MEMBER = false
+    Whisper(w, c.X, c.A, codec.EncodeRL("L", raw))
+    Whisper(w, c.X, c.A, codec.EncodeRL("P", codec.EncodeChat("L", guild, 9012, "MAGE", "strict-forged-leader-probe")))
+    T.eq(c.V.ns.Data.KnownRank(guild, c.X:Name()), nil, "strict transport setting grants no rank from a report")
+    T.eq(c.V:Saw("strict-forged-leader-probe"), 0, "strict transport setting also rejects self-promotion")
 end)
 
 T.test("security: even a selected ordinary relay cannot forge another author's text", function()
@@ -352,10 +380,14 @@ T.test("security: additional readers cause no author-to-reader confirmation traf
     c.V:Slash("/cz1", "one-signature-many-readers")
     w:Run(40)
     for _, reader in ipairs(readers) do T.eq(reader:Saw("one-signature-many-readers"), 1, "real reader verifies and displays once") end
+    w:Run(180) -- include the old non-reporter periodic discovery interval
     for i = start + 1, #w.log do
         local e = w.log[i]
         if e.from == c.V:Name() and e.dist == "WHISPER" then
             for _, reader in ipairs(readers) do T.no(e.target == reader:Name(), "author sends no private confirmation to readers") end
+        end
+        if e.dist == "WHISPER" then
+            for _, reader in ipairs(readers) do T.no(e.from == reader:Name(), "passive readers do not poll remote relays") end
         end
     end
 end)

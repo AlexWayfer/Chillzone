@@ -33,7 +33,12 @@ local function Build(opts)
 		w:Pair(c.G, c.A)
 	end
 	w:Run(opts.run or 400)
-	if not opts.run or opts.run > 30 then c.B.ns.Relay.PingAll(); w:Run(45) end
+	if not opts.run or opts.run > 30 then
+		-- Boris is an active sender: first learn discovery hints from the root,
+		-- then fetch the other candidates' credentials. Passive readers do neither.
+		c.B.ns.Relay.PingAll(); w:Run(45)
+		c.B.ns.Relay.PingAll(); w:Run(45)
+	end
 	return w, c
 end
 
@@ -306,10 +311,11 @@ T.test("relay: офицер — по игровому флагу звания, �
 	T.eq(c.A.ns.Chat.MyLevel(), 1, "Арагорн (звание 1 без флага) — участник")
 	T.ok(c.B.ns.GuildChat.CanOfficer(), "Борису доступен офицерский чат гильдии")
 	T.no(c.A.ns.GuildChat.CanOfficer(), "Арагорну — нет")
-	T.eq(c.G.ns.Data.KnownRank("Чиллзон Север", "Борис Быстрый"), 2, "Глеб знает Бориса как офицера из отчёта")
+	T.eq(c.G.ns.Data.KnownRank("Чиллзон Север", "Борис Быстрый"), nil, "перепись не выдаёт Борису офицерские права")
 	T.eq(c.G.ns.Data.KnownRank("Чиллзон", "Арагорн Светлый"), nil, "Арагорна в офицерах главной нет")
 	c.B:Slash("/cz2", "офицер по флагу")
 	w:Run(30)
+	T.eq(c.G.ns.Data.KnownRank("Чиллзон Север", "Борис Быстрый"), 2, "Глеб проверил отдельный офицерский сертификат Бориса")
 	for _, n in ipairs({ "K", "V", "G" }) do T.eq(c[n]:Saw("офицер по флагу"), 1, n .. " видит") end
 	T.eq(c.A:Saw("офицер по флагу"), 0, "Арагорн без флага не видит")
 	T.eq(c.M:Saw("офицер по флагу"), 0, "рядовой не видит")
