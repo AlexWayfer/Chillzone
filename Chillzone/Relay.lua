@@ -94,6 +94,17 @@ function Relay.TrustOf(name)
 	return nil
 end
 
+-- Глава или офицер главной гильдии: по моему ростеру, если я в ней, иначе по её отчёту.
+-- Такие реле выбираются первыми (Relay.Pick).
+function Relay.IsMainOfficer(name)
+	local g = ns.MyGuild()
+	if g and U.IsMainGuild(g) then
+		local role = ns.Roster.TrustOf(name)
+		return role == "leader" or role == "officer"
+	end
+	return ns.Data.IsMainOfficer(name) == true
+end
+
 local function Entry(key, name)
 	local e = known[key]
 	if not e then
@@ -247,13 +258,19 @@ local function FlushHold()
 	end
 end
 
--- Реле, через которое пойдёт сообщение моей гильдии сейчас: запись known или nil.
+-- Реле, через которое пойдёт сообщение моей гильдии сейчас: запись known или nil. Из
+-- отвечающих реле первыми идут глава и офицеры главной гильдии, остальные — если ни один из
+-- них не отвечает. Внутри группы реле меняется раз в RELAY_WINDOW (по хешу гильдии).
 function Relay.Pick()
 	local now = Now()
-	local keys = {}
+	local officers, others = {}, {}
 	for _, e in ipairs(Relay.Candidates()) do
-		if Verified(e, now) then keys[#keys + 1] = e.key end
+		if Verified(e, now) then
+			local list = Relay.IsMainOfficer(e.name) and officers or others
+			list[#list + 1] = e.key
+		end
 	end
+	local keys = #officers > 0 and officers or others
 	local pick = Codec.PickRelay(MyGuildKey() or "", keys, now, C.RELAY_WINDOW)
 	return pick and known[pick] or nil
 end

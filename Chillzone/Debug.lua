@@ -178,6 +178,7 @@ local function Relays(lines, now)
 			when = Ago(now - e.asked)
 		end
 		local mark = (pick and pick.key == e.key) and ("  " .. Paint(GOLD, L.DBG_PICKED)) or ""
+		if R.IsMainOfficer(e.name) then mark = mark .. "  " .. Paint(GREEN, L.DBG_RELAY_OFFICER) end
 		Add(lines, {
 			text = (code == "ok" and ICON_ON or ICON_OFF) .. Paint(WHITE, U.Display(e.name)) .. mark .. "  " .. Paint(GREY, L.DBG_SRC_RELAY[trust] or tostring(trust)),
 			right = Paint(STATE_COLOR[code] or GREY, state) .. (when and Paint(GREY, ", " .. when) or ""),

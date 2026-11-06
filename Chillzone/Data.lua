@@ -157,6 +157,20 @@ function Data.IsMainTrusted(name, now)
 	return false
 end
 
+-- Глава или офицер главной гильдии по её отчёту (без связных): true, false или nil (отчёта
+-- нет или руководство в отчётах расходится).
+function Data.IsMainOfficer(name, now)
+	local row = Data.Main(now)
+	if not row or row.conflict then return nil end
+	local key = U.Key(name)
+	if not key then return false end
+	if U.Key(row.r.leader) == key then return true end
+	for _, o in ipairs(row.r.officers or {}) do
+		if U.Key(o.name) == key then return true end
+	end
+	return false
+end
+
 ---------------------------------------------------------------------------
 -- Сводки
 ---------------------------------------------------------------------------

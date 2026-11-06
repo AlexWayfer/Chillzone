@@ -259,6 +259,67 @@ T.test("relay: игра не отдала права званий — офице
 	T.eq(#X.ns.db.errors, 0, "без ошибок")
 end)
 
+-- Часы клиента cl на время t; все известные ему реле отвечают.
+local function AtWindow(cl, t)
+	cl.ns.Now = function() return t end
+	for _, e in pairs(cl.ns.Relay.Known()) do e.verified, e.asked, e.down = t, nil, nil end
+end
+
+T.test("relay: из отвечающих реле первыми выбираются глава и офицеры главной", function()
+	local _, c = Build()
+	local B, A = c.B, c.A
+	local clockB, clockA = B.ns.Now, A.ns.Now
+	local base = clockB()
+	local known = B.ns.Relay.Known()
+	for _, k in ipairs({ "арагорн светлый", "карл великий", "мира тихая" }) do
+		T.ok(known[k], "Борис знает реле " .. k)
+	end
+	local gk = B.ns.Util.GuildKey("Чиллзон Север")
+	local picked, plain = {}, {}
+	for i = 1, 60 do
+		local t = base + i * 600
+		AtWindow(B, t)
+		picked[B.ns.Relay.Pick().key] = true
+		plain[B.ns.Codec.PickRelay(gk, { "арагорн светлый", "карл великий", "мира тихая" }, t, 600)] = true
+	end
+	T.ok(plain["мира тихая"], "без приоритета Мира иногда была бы выбрана")
+	T.no(picked["мира тихая"], "рядовая Мира не выбирается, пока офицеры отвечают")
+	T.ok(picked["арагорн светлый"] and picked["карл великий"], "глава и офицер чередуются")
+	T.ok(B.ns.Relay.IsMainOfficer("Карл Великий") and not B.ns.Relay.IsMainOfficer("Мира Тихая"), "по отчёту главной")
+
+	-- Глава и офицер не в игре: сообщения идут через участника.
+	local t = base + 61 * 600
+	AtWindow(B, t)
+	known["арагорн светлый"].down = t + 100
+	known["карл великий"].down = t + 100
+	T.eq(B.ns.Relay.Pick().key, "мира тихая", "офицеры не в игре — Мира")
+
+	-- Руководство главной в отчётах расходится: офицерам из отчёта не верим, приоритета нет.
+	B.ns.Data.Row("Чиллзон").conflict = true
+	picked = {}
+	for i = 62, 121 do
+		AtWindow(B, base + i * 600)
+		picked[B.ns.Relay.Pick().key] = true
+	end
+	T.ok(picked["мира тихая"], "при расхождении Мира снова в общем ряду")
+	B.ns.Data.Row("Чиллзон").conflict = nil
+
+	-- В главной гильдии — по своему ростеру: у Арагорна из Карла и Миры всегда Карл.
+	T.ok(A.ns.Relay.Known()["мира тихая"], "Арагорн знает Миру")
+	picked, plain = {}, {}
+	local agk = A.ns.Util.GuildKey("Чиллзон")
+	for i = 1, 60 do
+		local at = base + i * 600
+		AtWindow(A, at)
+		picked[A.ns.Relay.Pick().key] = true
+		plain[A.ns.Codec.PickRelay(agk, { "карл великий", "мира тихая" }, at, 600)] = true
+	end
+	T.ok(plain["мира тихая"], "без приоритета Арагорн иногда выбрал бы Миру")
+	T.no(picked["мира тихая"], "Арагорн выбирает Карла")
+	B.ns.Now, A.ns.Now = clockB, clockA
+	for name, cl in pairs(c) do T.eq(#cl.ns.db.errors, 0, name .. ": без ошибок") end
+end)
+
 T.test("relay: из старых скрытых каналов аддон выходит, их строки спрятаны", function()
 	local w, c = Build()
 	local N = w:Client({ first = "Нина", surname = "Новая", guild = "Чиллзон Север", rank = 3, relays = RELAY })

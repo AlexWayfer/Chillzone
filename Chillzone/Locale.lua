@@ -206,6 +206,7 @@ L.DBG_REGISTERED = "регистрация у реле (я репортёр): %s
 L.DBG_NEVER = "не было"
 L.DBG_NO_RELAYS = "ни одного реле не известно"
 L.DBG_PICKED = "моё реле"
+L.DBG_RELAY_OFFICER = "в приоритете"
 L.DBG_DOWN_LEFT = "ещё %s"
 L.DBG_SRC_RELAY = {
 	self = "я", seed = "из Config (RELAYS)", manual = "добавлено вручную", officer = "глава или офицер главной",
